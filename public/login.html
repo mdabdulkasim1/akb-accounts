@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Group Accounts</title>
+<style>
+:root{
+  color-scheme: light;
+  --plane:#f4f4f1; --panel:#ffffff; --surface-1:#fcfcfb;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --muted:#898781;
+  --border:rgba(11,11,11,.10); --border-strong:rgba(11,11,11,.18);
+  --accent:#2a78d6; --critical:#d03b3b;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    color-scheme: dark;
+    --plane:#0d0e11; --panel:#1b1e24; --surface-1:#16181d;
+    --text-primary:#fff; --text-secondary:#c3c2b7; --muted:#93918a;
+    --border:rgba(255,255,255,.12); --border-strong:rgba(255,255,255,.22);
+    --accent:#3987e5; --critical:#e05a5a;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font);background:var(--plane);color:var(--text-primary);
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.box{width:100%;max-width:390px;background:var(--panel);border:1px solid var(--border);
+  border-radius:14px;padding:30px 28px;box-shadow:0 1px 2px rgba(0,0,0,.06),0 14px 40px rgba(0,0,0,.10)}
+h1{margin:0 0 4px;font-size:20px;letter-spacing:-.02em}
+.sub{color:var(--muted);font-size:13px;margin-bottom:24px}
+label{display:block;font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:6px}
+input{width:100%;background:var(--surface-1);border:1px solid var(--border-strong);border-radius:8px;
+  padding:11px 12px;font-size:15px;font-family:inherit;color:inherit;outline:none;margin-bottom:16px}
+input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+button{width:100%;background:var(--accent);color:#fff;border:0;border-radius:8px;padding:12px;
+  font-size:15px;font-weight:600;font-family:inherit;cursor:pointer}
+button:hover{filter:brightness(1.08)}
+button:disabled{opacity:.6;cursor:default}
+.err{background:color-mix(in srgb,var(--critical) 12%,transparent);border:1px solid color-mix(in srgb,var(--critical) 40%,transparent);
+  color:var(--critical);border-radius:8px;padding:10px 12px;font-size:13.5px;margin-bottom:16px;display:none}
+.foot{margin-top:18px;font-size:12px;color:var(--muted);text-align:center;line-height:1.6}
+</style>
+</head>
+<body>
+<form class="box" id="f">
+  <h1>Group Accounts</h1>
+  <div class="sub">Sign in to continue</div>
+  <div class="err" id="err"></div>
+  <label for="email">Email</label>
+  <input type="email" id="email" autocomplete="username" required autofocus>
+  <label for="password">Password</label>
+  <input type="password" id="password" autocomplete="current-password" required>
+  <button type="submit" id="go">Sign in</button>
+  <div class="foot">Internal system. Ask your administrator for access.</div>
+</form>
+<script>
+var f = document.getElementById('f'), err = document.getElementById('err'), go = document.getElementById('go');
+f.addEventListener('submit', async function (e) {
+  e.preventDefault();
+  err.style.display = 'none'; go.disabled = true; go.textContent = 'Signing in…';
+  try {
+    var r = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+      body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('password').value })
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Sign in failed.');
+    location.href = '/';
+  } catch (ex) {
+    err.textContent = ex.message; err.style.display = 'block';
+    go.disabled = false; go.textContent = 'Sign in';
+  }
+});
+</script>
+</body>
+</html>

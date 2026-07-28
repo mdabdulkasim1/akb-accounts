@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Group Accounts — Internal Expense & Income Manager</title>
+<style>
+/* ============ TOKENS ============ */
+:root{
+  color-scheme: light;
+  --surface-1:#fcfcfb;
+  --plane:#f4f4f1;
+  --panel:#ffffff;
+  --text-primary:#0b0b0b;
+  --text-secondary:#52514e;
+  --muted:#898781;
+  --grid:#e1e0d9;
+  --axis:#c3c2b7;
+  --border:rgba(11,11,11,0.10);
+  --border-strong:rgba(11,11,11,0.18);
+  --series-1:#2a78d6;
+  --series-2:#eb6834;
+  --good:#0ca30c;
+  --good-text:#006300;
+  --warning:#fab219;
+  --critical:#d03b3b;
+  --accent:#2a78d6;
+  --accent-ink:#ffffff;
+  --shadow:0 1px 2px rgba(11,11,11,.06), 0 8px 24px rgba(11,11,11,.06);
+  --radius:10px;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface-1:#16181d;
+  --plane:#0d0e11;
+  --panel:#1b1e24;
+  --text-primary:#ffffff;
+  --text-secondary:#c3c2b7;
+  --muted:#93918a;
+  --grid:#2c2e33;
+  --axis:#383a40;
+  --border:rgba(255,255,255,0.12);
+  --border-strong:rgba(255,255,255,0.22);
+  --series-1:#3987e5;
+  --series-2:#d95926;
+  --good:#0ca30c;
+  --good-text:#0ca30c;
+  --warning:#fab219;
+  --critical:#e05a5a;
+  --accent:#3987e5;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--font);
+  background:var(--plane);
+  color:var(--text-primary);
+  font-size:14px;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0;font-weight:650;letter-spacing:-0.01em}
+button,input,select,textarea{font-family:inherit;font-size:14px;color:inherit}
+a{color:var(--accent)}
+
+/* ============ LAYOUT ============ */
+.app{max-width:1400px;margin:0 auto;padding:0 20px 60px}
+header.topbar{
+  position:sticky;top:0;z-index:40;
+  background:var(--plane);
+  padding:14px 0 0;
+  border-bottom:1px solid var(--border);
+  margin-bottom:20px;
+}
+.topbar-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:10px;margin-right:auto}
+.brand .mark{
+  font-weight:750;font-size:17px;letter-spacing:-0.02em;
+}
+.brand .sub{color:var(--muted);font-size:12px}
+.tabs{display:flex;gap:2px;margin-top:12px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+  padding:10px 14px;cursor:pointer;color:var(--text-secondary);
+  font-weight:550;white-space:nowrap;border-radius:6px 6px 0 0;
+}
+.tab:hover{background:var(--border);color:var(--text-primary)}
+.tab[aria-selected="true"]{color:var(--text-primary);border-bottom-color:var(--accent)}
+
+.btn{
+  appearance:none;border:1px solid var(--border-strong);background:var(--panel);
+  color:var(--text-primary);padding:8px 13px;border-radius:8px;cursor:pointer;
+  font-weight:550;display:inline-flex;align-items:center;gap:6px;line-height:1.2;
+}
+.btn:hover{background:var(--border)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--critical);border-color:var(--border-strong)}
+.btn.sm{padding:5px 9px;font-size:12.5px;border-radius:6px}
+.btn.icon{padding:8px 10px}
+
+.card{
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;box-shadow:var(--shadow);
+}
+.card h3{font-size:14px;margin-bottom:2px}
+.card .card-sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+.grid{display:grid;gap:16px}
+.view{display:none}
+.view.active{display:block}
+.section-title{font-size:17px;margin:26px 0 12px}
+.section-title:first-child{margin-top:0}
+
+/* ============ STAT TILES ============ */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:20px}
+.tile{
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 16px;box-shadow:var(--shadow);
+}
+.tile .label{font-size:12px;color:var(--muted);font-weight:550;text-transform:uppercase;letter-spacing:.04em}
+.tile .value{font-size:25px;font-weight:700;margin-top:6px;letter-spacing:-0.02em}
+.tile .foot{font-size:12px;color:var(--text-secondary);margin-top:4px}
+.pos{color:var(--good-text)}
+.neg{color:var(--critical)}
+
+/* ============ TABLES ============ */
+.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{
+  text-align:left;padding:10px 12px;font-weight:600;color:var(--text-secondary);
+  background:var(--surface-1);border-bottom:1px solid var(--border);white-space:nowrap;
+  position:sticky;top:0;
+}
+td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--surface-1)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tfoot td{font-weight:700;background:var(--surface-1);border-top:1px solid var(--border-strong)}
+.empty{padding:36px;text-align:center;color:var(--muted)}
+
+.pill{
+  display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;
+  border:1px solid var(--border-strong);white-space:nowrap;
+}
+.pill.income{color:var(--good-text);border-color:color-mix(in srgb,var(--good) 45%,transparent)}
+.pill.expense{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
+.pill.paid{color:var(--good-text)}
+.pill.unpaid{color:var(--critical)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px;vertical-align:baseline}
+
+/* ============ FORMS ============ */
+.filters{
+  display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px;
+}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+input[type=text],input[type=number],input[type=date],select,textarea{
+  background:var(--surface-1);border:1px solid var(--border-strong);border-radius:7px;
+  padding:8px 10px;min-width:130px;outline:none;
+}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+textarea{min-height:60px;resize:vertical;width:100%}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.form-grid .full{grid-column:1/-1}
+.form-grid input,.form-grid select{width:100%;min-width:0}
+#fSearch{width:100%;min-width:170px}
+
+/* ============ MODAL ============ */
+.modal-back{
+  position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;
+  display:none;align-items:flex-start;justify-content:center;padding:30px 16px;overflow-y:auto;
+}
+.modal-back.open{display:flex}
+.modal{
+  background:var(--panel);border-radius:14px;border:1px solid var(--border);
+  width:100%;max-width:720px;box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-body{padding:20px}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--border)}
+
+/* ============ CHARTS ============ */
+.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:900px){.chart-row{grid-template-columns:1fr}}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px;color:var(--text-secondary)}
+.legend span.key{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+svg.chart{width:100%;height:auto;display:block;overflow:visible}
+svg .gridline{stroke:var(--grid);stroke-width:1}
+svg .axisline{stroke:var(--axis);stroke-width:1}
+svg text{fill:var(--muted);font-size:11px;font-family:var(--font)}
+svg text.val{fill:var(--text-secondary);font-size:11px;font-weight:600}
+.tooltip{
+  position:fixed;pointer-events:none;z-index:200;background:var(--panel);
+  border:1px solid var(--border-strong);border-radius:8px;padding:8px 11px;
+  box-shadow:var(--shadow);font-size:12.5px;display:none;max-width:260px;
+}
+.tooltip b{display:block;margin-bottom:4px;font-size:12.5px}
+.tooltip .r{display:flex;justify-content:space-between;gap:14px;font-variant-numeric:tabular-nums}
+.toast{
+  position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+  background:var(--text-primary);color:var(--plane);padding:11px 18px;border-radius:9px;
+  z-index:300;opacity:0;transition:.22s;font-weight:550;pointer-events:none;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.hint{font-size:12.5px;color:var(--muted);line-height:1.6}
+.co-chip{display:inline-flex;align-items:center;gap:6px}
+.userchip{font-size:12.5px;color:var(--text-secondary);border:1px solid var(--border);border-radius:999px;padding:5px 11px;background:var(--panel)}
+.userchip b{color:var(--text-primary)}
+.role{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700}
+.hidden{display:none !important}
+.pill.pending{color:#8a6100;border-color:color-mix(in srgb,var(--warning) 55%,transparent)}
+:root[data-theme="dark"] .pill.pending{color:var(--warning)}
+.pill.approved{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,transparent)}
+.pill.rejected{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
+.pill.urgent{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 50%,transparent);font-weight:700}
+.badge{display:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--critical);
+  color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center;margin-left:6px}
+.badge.on{display:inline-block}
+.was{color:var(--muted);text-decoration:line-through;font-size:12px}
+.warn-strip{background:color-mix(in srgb,var(--warning) 16%,var(--panel));border:1px solid color-mix(in srgb,var(--warning) 45%,transparent);
+  border-radius:var(--radius);padding:12px 15px;margin-bottom:16px;font-size:13.5px}
+td.work{max-width:280px;white-space:normal}
+#view-settings .card.wide{grid-column:1/-1}
+.chk{display:flex;align-items:center;gap:7px;font-size:13px;padding:3px 0}
+.chk input{min-width:0;width:auto}
+.banner{background:color-mix(in srgb,var(--warning) 18%,var(--panel));border:1px solid color-mix(in srgb,var(--warning) 45%,transparent);
+  border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:13.5px}
+.matrix td:first-child{font-weight:600;background:var(--surface-1)}
+.bar-track{height:7px;border-radius:4px;background:var(--grid);overflow:hidden;min-width:70px}
+.bar-fill{height:100%;border-radius:4px;background:var(--series-1)}
+@media print{
+  header.topbar,.filters,.btn,.tabs,.no-print{display:none !important}
+  body{background:#fff}
+  .card,.tile,.table-wrap{box-shadow:none;break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="topbar">
+  <div class="topbar-row">
+    <div class="brand">
+      <span class="mark" id="groupTitle">Group Accounts</span>
+      <span class="sub" id="groupSub">internal expense &amp; income control</span>
+    </div>
+    <span class="userchip" id="userChip"></span>
+    <button class="btn sm" id="btnBackup">⬇ Export</button>
+    <button class="btn sm" id="btnPrint">🖨 Print</button>
+    <button class="btn sm icon" id="btnTheme" title="Toggle light / dark">◐</button>
+    <button class="btn sm" id="btnLogout">Sign out</button>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-view="dashboard" aria-selected="true">Dashboard</button>
+    <button class="tab" role="tab" data-view="pay" aria-selected="false">Payments <span class="badge" id="payBadge"></span></button>
+    <button class="tab" role="tab" data-view="txn" aria-selected="false">Transactions</button>
+    <button class="tab" role="tab" data-view="cash" aria-selected="false">Cash</button>
+    <button class="tab" role="tab" data-view="inter" aria-selected="false">Inter-Company</button>
+    <button class="tab" role="tab" data-view="reports" aria-selected="false">Reports</button>
+    <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ================= DASHBOARD ================= -->
+  <section class="view active" id="view-dashboard">
+    <div class="filters">
+      <div class="field"><label for="dashCo">Company</label>
+        <select id="dashCo"><option value="">All companies (group)</option></select></div>
+      <div class="field"><label for="dashFrom">From</label><input type="date" id="dashFrom"></div>
+      <div class="field"><label for="dashTo">To</label><input type="date" id="dashTo"></div>
+      <div class="field"><label for="dashPeriod">Quick period</label>
+        <select id="dashPeriod">
+          <option value="ytd">This financial year to date</option>
+          <option value="mtd">This month</option>
+          <option value="q">This quarter</option>
+          <option value="last12">Last 12 months</option>
+          <option value="all" selected>All time</option>
+          <option value="custom">Custom</option>
+        </select></div>
+      <button class="btn sm" id="dashReset">Reset</button>
+    </div>
+
+    <div class="tiles" id="dashTiles"></div>
+
+    <div class="chart-row">
+      <div class="card">
+        <h3>Income vs expense by company</h3>
+        <div class="card-sub">Totals for the selected period, in <span class="cur">AED</span></div>
+        <div class="legend" id="legCo"></div>
+        <div id="chartCompany"></div>
+      </div>
+      <div class="card">
+        <h3>Monthly trend</h3>
+        <div class="card-sub">Income and expense per month</div>
+        <div class="legend" id="legTrend"></div>
+        <div id="chartTrend"></div>
+      </div>
+    </div>
+
+    <div class="chart-row" style="margin-top:16px">
+      <div class="card">
+        <h3>Top expense categories</h3>
+        <div class="card-sub">Largest spend areas for the period</div>
+        <div id="chartCat"></div>
+      </div>
+      <div class="card">
+        <h3>Company snapshot</h3>
+        <div class="card-sub">Net result and share of group expense</div>
+        <div class="table-wrap" style="border:0">
+          <table id="tblSnapshot"></table>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="section-title">Recent entries</h2>
+    <div class="table-wrap"><table id="tblRecent"></table></div>
+  </section>
+
+  <!-- ================= TRANSACTIONS ================= -->
+  <section class="view" id="view-txn">
+    <div class="filters">
+      <div class="field"><label for="fCo">Company</label><select id="fCo"><option value="">All</option></select></div>
+      <div class="field"><label for="fType">Type</label>
+        <select id="fType"><option value="">All</option><option value="income">Income</option><option value="expense">Expense</option></select></div>
+      <div class="field"><label for="fCat">Category</label><select id="fCat"><option value="">All</option></select></div>
+      <div class="field"><label for="fStatus">Status</label>
+        <select id="fStatus"><option value="">All</option><option value="paid">Paid</option><option value="unpaid">Unpaid</option></select></div>
+      <div class="field"><label for="fFrom">From</label><input type="date" id="fFrom"></div>
+      <div class="field"><label for="fTo">To</label><input type="date" id="fTo"></div>
+      <div class="field" style="flex:1"><label for="fSearch">Search</label><input type="text" id="fSearch" placeholder="party, invoice, note…"></div>
+      <button class="btn sm" id="fReset">Clear</button>
+      <button class="btn sm" id="btnExportTxn">Export CSV</button>
+      <button class="btn primary" id="btnAddTxn">+ New entry</button>
+    </div>
+    <div id="txnSummary" class="tiles"></div>
+    <div class="table-wrap"><table id="tblTxn"></table></div>
+  </section>
+
+  <!-- ================= PAYMENT REQUESTS ================= -->
+  <section class="view" id="view-pay">
+    <div class="filters">
+      <div class="field"><label for="pStatus">Show</label>
+        <select id="pStatus">
+          <option value="open">Open — waiting or approved</option>
+          <option value="pending">Waiting for approval</option>
+          <option value="approved">Approved, not yet released</option>
+          <option value="paid">Released</option>
+          <option value="rejected">Rejected</option>
+          <option value="">Everything</option>
+        </select></div>
+      <div class="field"><label for="pCo">Company</label><select id="pCo"><option value="">All</option></select></div>
+      <div class="field" style="flex:1"><label for="pSearch">Search</label><input type="text" id="pSearch" placeholder="work, party, invoice…"></div>
+      <button class="btn sm" id="btnExportPay">Export CSV</button>
+      <button class="btn primary" id="btnAddReq">+ New payment request</button>
+    </div>
+    <div class="tiles" id="payTiles"></div>
+    <div class="table-wrap"><table id="tblPay"></table></div>
+    <p class="hint" style="margin-top:12px">Request is raised → administrator approves (and may change the amount) → accountant releases the money, which posts the expense entry automatically.</p>
+  </section>
+
+  <!-- ================= CASH ================= -->
+  <section class="view" id="view-cash">
+    <div class="filters">
+      <div class="field"><label for="ciCo">Company</label><select id="ciCo"><option value="">All</option></select></div>
+      <div class="field"><label for="ciFrom">From</label><input type="date" id="ciFrom"></div>
+      <div class="field"><label for="ciTo">To</label><input type="date" id="ciTo"></div>
+      <div class="field" style="flex:1"><label for="ciSearch">Search</label><input type="text" id="ciSearch" placeholder="source, reference, note…"></div>
+      <button class="btn sm" id="btnExportCash">Export CSV</button>
+      <button class="btn sm" id="btnAddCount">Record cash count</button>
+      <button class="btn primary" id="btnAddCashIn">+ Cash received</button>
+    </div>
+    <div id="cashWarn"></div>
+    <div class="tiles" id="cashTiles"></div>
+    <h2 class="section-title">Cash position by company</h2>
+    <div class="table-wrap"><table id="tblCashNow"></table></div>
+    <h2 class="section-title">Cash received</h2>
+    <div class="table-wrap"><table id="tblCashIn"></table></div>
+    <h2 class="section-title">Cash counts</h2>
+    <div class="table-wrap"><table id="tblCashLog"></table></div>
+  </section>
+
+  <!-- ================= INTER-COMPANY ================= -->
+  <section class="view" id="view-inter">
+    <div class="filters">
+      <div class="hint" style="flex:1">Record money moved between group companies. These do not affect profit — they create <b>due&nbsp;from</b> / <b>due&nbsp;to</b> balances that must net to zero across the group.</div>
+      <button class="btn sm" id="btnExportInter">Export CSV</button>
+      <button class="btn primary" id="btnAddInter">+ New transfer</button>
+    </div>
+    <div class="tiles" id="interTiles"></div>
+    <h2 class="section-title">Net position by company</h2>
+    <div class="table-wrap"><table id="tblInterNet"></table></div>
+    <h2 class="section-title">Balance matrix</h2>
+    <div class="hint" style="margin-bottom:10px">Read as: row company is owed the amount shown by the column company (negative = row owes column).</div>
+    <div class="table-wrap"><table id="tblMatrix" class="matrix"></table></div>
+    <h2 class="section-title">Transfer log</h2>
+    <div class="table-wrap"><table id="tblInter"></table></div>
+  </section>
+
+  <!-- ================= REPORTS ================= -->
+  <section class="view" id="view-reports">
+    <div class="filters">
+      <div class="field"><label for="rFrom">From</label><input type="date" id="rFrom"></div>
+      <div class="field"><label for="rTo">To</label><input type="date" id="rTo"></div>
+      <div class="field"><label for="rReport">Report</label>
+        <select id="rReport">
+          <option value="pl">Consolidated P&amp;L by company</option>
+          <option value="cat">Category breakdown by company</option>
+          <option value="ar">Unpaid receivables (customers owe us)</option>
+          <option value="ap">Unpaid payables (we owe suppliers)</option>
+          <option value="party">Party statement</option>
+        </select></div>
+      <div class="field" id="partyPick" style="display:none"><label for="rParty">Party</label><select id="rParty"></select></div>
+      <button class="btn sm" id="btnExportReport">Export CSV</button>
+      <button class="btn sm" id="btnPrintReport">Print</button>
+    </div>
+    <div id="reportOut"></div>
+  </section>
+
+  <!-- ================= SETTINGS ================= -->
+  <section class="view" id="view-settings">
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+      <div class="card">
+        <h3>Group &amp; currency</h3>
+        <div class="card-sub">Names shown across the app</div>
+        <div class="form-grid">
+          <div class="field full"><label for="setGroup">Group name</label><input type="text" id="setGroup"></div>
+          <div class="field"><label for="setCur">Currency code</label><input type="text" id="setCur" maxlength="5"></div>
+          <div class="field"><label for="setFy">Financial year starts</label>
+            <select id="setFy">
+              <option value="1">January</option><option value="4">April</option>
+              <option value="7">July</option><option value="10">October</option>
+            </select></div>
+        </div>
+        <div style="margin-top:14px"><button class="btn primary" id="btnSaveSettings">Save settings</button></div>
+      </div>
+
+      <div class="card wide">
+        <h3>Companies</h3>
+        <div class="card-sub">The entities in your group</div>
+        <div id="coList"></div>
+        <div style="margin-top:12px"><button class="btn sm" id="btnAddCo">+ Add company</button></div>
+      </div>
+
+      <div class="card">
+        <h3>Categories</h3>
+        <div class="card-sub">Used in the entry form and reports</div>
+        <div class="form-grid">
+          <div class="field full"><label for="setExpCats">Expense categories (one per line)</label><textarea id="setExpCats" rows="9"></textarea></div>
+          <div class="field full"><label for="setIncCats">Income categories (one per line)</label><textarea id="setIncCats" rows="5"></textarea></div>
+          <div class="field full"><label for="setMethods">Payment methods (one per line)</label><textarea id="setMethods" rows="5"></textarea></div>
+          <div class="field full"><label for="setSources">Cash received — sources (one per line)</label><textarea id="setSources" rows="6"></textarea></div>
+        </div>
+        <div style="margin-top:14px"><button class="btn primary" id="btnSaveLists">Save lists</button></div>
+      </div>
+
+      <div class="card">
+        <h3>My account</h3>
+        <div class="card-sub">Change your own password</div>
+        <div class="form-grid">
+          <div class="field full"><label for="pwCur">Current password</label><input type="password" id="pwCur"></div>
+          <div class="field full"><label for="pwNew">New password (min 8 characters)</label><input type="password" id="pwNew"></div>
+        </div>
+        <div style="margin-top:14px"><button class="btn primary" id="btnPw">Change password</button></div>
+      </div>
+
+      <div class="card admin-only wide">
+        <h3>People</h3>
+        <div class="card-sub">Who can sign in, and what they can reach</div>
+        <div id="userList"></div>
+        <div style="margin-top:12px"><button class="btn sm" id="btnAddUser">+ Add person</button></div>
+        <p class="hint" style="margin-top:12px"><b>Administrator</b> — approves payment requests, sees every company, deletes entries, manages people and settings.<br><b>Accountant</b> — releases approved payments, records cash in hand, sees every company, cannot approve or delete.<br><b>Staff</b> — raises payment requests and enters transactions, only for the companies you tick, cannot delete anything.</p>
+      </div>
+
+      <div class="card admin-only wide">
+        <h3>Recent activity</h3>
+        <div class="card-sub">Last 100 actions across the group</div>
+        <div id="auditList"></div>
+      </div>
+
+      <div class="card">
+        <h3>Data</h3>
+        <div class="card-sub">Everything is stored in the group database</div>
+        <p class="hint">All entries live on the server, so everyone signed in sees the same figures immediately. Take a periodic export for your own records or for your accountant.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+          <button class="btn" id="btnBackup2">⬇ Export everything (JSON)</button>
+          <button class="btn" id="btnCsvAll">⬇ Export all entries (CSV)</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+</div>
+
+<div class="modal-back" id="modalBack"><div class="modal" role="dialog" aria-modal="true">
+  <div class="modal-head"><h3 id="modalTitle">Entry</h3><button class="btn sm" id="modalX">✕</button></div>
+  <div class="modal-body" id="modalBody"></div>
+  <div class="modal-foot" id="modalFoot"></div>
+</div></div>
+
+<div class="tooltip" id="tip"></div>
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
