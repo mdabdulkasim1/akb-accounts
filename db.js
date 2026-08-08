@@ -65,6 +65,19 @@ async function migrate() {
       UNIQUE (kind, name)
     );
 
+    -- projects / locations / branches belonging to a company. Every cost and
+    -- payment can be tagged to one so the books can be read project-wise.
+    CREATE TABLE IF NOT EXISTS projects (
+      id          SERIAL PRIMARY KEY,
+      company_id  INT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      name        TEXT NOT NULL,
+      code        TEXT NOT NULL DEFAULT '',
+      active      BOOLEAN NOT NULL DEFAULT TRUE,
+      sort        INT  NOT NULL DEFAULT 0,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS projects_company_idx ON projects (company_id);
+
     CREATE TABLE IF NOT EXISTS txns (
       id          SERIAL PRIMARY KEY,
       tdate       DATE NOT NULL,
@@ -156,6 +169,14 @@ async function migrate() {
       detail     TEXT NOT NULL DEFAULT '',
       at         TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- tag entries to a project / location (nullable — companies without
+    -- projects simply leave it blank). Cleared, not deleted, when the
+    -- project goes away, so the entry itself is never lost.
+    ALTER TABLE txns             ADD COLUMN IF NOT EXISTS project_id INT REFERENCES projects(id) ON DELETE SET NULL;
+    ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS project_id INT REFERENCES projects(id) ON DELETE SET NULL;
+    ALTER TABLE cash_in          ADD COLUMN IF NOT EXISTS project_id INT REFERENCES projects(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS txns_project_idx ON txns (project_id);
   `);
 }
 

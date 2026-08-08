@@ -270,6 +270,8 @@ td.work{max-width:280px;white-space:normal}
     <div class="filters">
       <div class="field"><label for="dashCo">Company</label>
         <select id="dashCo"><option value="">All companies (group)</option></select></div>
+      <div class="field"><label for="dashProj">Project / location</label>
+        <select id="dashProj"><option value="">All projects / locations</option></select></div>
       <div class="field"><label for="dashFrom">From</label><input type="date" id="dashFrom"></div>
       <div class="field"><label for="dashTo">To</label><input type="date" id="dashTo"></div>
       <div class="field"><label for="dashPeriod">Quick period</label>
@@ -324,6 +326,7 @@ td.work{max-width:280px;white-space:normal}
   <section class="view" id="view-txn">
     <div class="filters">
       <div class="field"><label for="fCo">Company</label><select id="fCo"><option value="">All</option></select></div>
+      <div class="field"><label for="fProj">Project / location</label><select id="fProj"><option value="">All</option></select></div>
       <div class="field"><label for="fType">Type</label>
         <select id="fType"><option value="">All</option><option value="income">Income</option><option value="expense">Expense</option></select></div>
       <div class="field"><label for="fCat">Category</label><select id="fCat"><option value="">All</option></select></div>
@@ -409,6 +412,7 @@ td.work{max-width:280px;white-space:normal}
         <select id="rReport">
           <option value="pl">Consolidated P&amp;L by company</option>
           <option value="cat">Category breakdown by company</option>
+          <option value="project">Project / location breakdown</option>
           <option value="ar">Unpaid receivables (customers owe us)</option>
           <option value="ap">Unpaid payables (we owe suppliers)</option>
           <option value="party">Party statement</option>
@@ -443,6 +447,13 @@ td.work{max-width:280px;white-space:normal}
         <div class="card-sub">The entities in your group</div>
         <div id="coList"></div>
         <div style="margin-top:12px"><button class="btn sm" id="btnAddCo">+ Add company</button></div>
+      </div>
+
+      <div class="card admin-only wide">
+        <h3>Projects &amp; locations</h3>
+        <div class="card-sub">Sites, branches or projects under each company — booked against costs, payments and cash so every one has its own figures</div>
+        <div id="projList"></div>
+        <div style="margin-top:12px"><button class="btn sm" id="btnAddProj">+ Add project / location</button></div>
       </div>
 
       <div class="card">

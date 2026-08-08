@@ -4,7 +4,7 @@
    ========================================================= */
 'use strict';
 
-var S = { me: null, settings: {}, companies: [], expCats: [], incCats: [], methods: [], sources: [], txns: [], transfers: [], users: [], requests: [], cash: [], cashIn: [] };
+var S = { me: null, settings: {}, companies: [], projects: [], expCats: [], incCats: [], methods: [], sources: [], txns: [], transfers: [], users: [], requests: [], cash: [], cashIn: [] };
 var SLOT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 
 /* ---------------------------------------------------------------- api */
@@ -23,7 +23,7 @@ async function api(path, method, body) {
 }
 async function refresh() {
   var d = await api('/api/data');
-  S.me = d.me; S.settings = d.settings; S.companies = d.companies;
+  S.me = d.me; S.settings = d.settings; S.companies = d.companies; S.projects = d.projects || [];
   S.expCats = d.expCats; S.incCats = d.incCats; S.methods = d.methods;
   S.txns = d.txns; S.transfers = d.transfers; S.users = d.users || [];
   S.requests = d.requests || []; S.cash = d.cash || []; S.cashIn = d.cashIn || []; S.sources = d.sources || [];
@@ -64,6 +64,34 @@ function co(id) {
   return { name: '—', code: '?', color: '#898781' };
 }
 function coChip(id) { var c = co(id); return '<span class="co-chip"><i class="dot" style="background:' + c.color + '"></i>' + esc(c.name) + '</span>'; }
+function proj(id) {
+  id = Number(id);
+  for (var i = 0; i < S.projects.length; i++) if (Number(S.projects[i].id) === id) return S.projects[i];
+  return null;
+}
+function projName(id) { var p = proj(id); return p ? p.name : ''; }
+// active projects belonging to a company, ready for a <select>
+function projectsFor(companyId) {
+  var id = Number(companyId);
+  return S.projects.filter(function (p) { return Number(p.company_id) === id && p.active; });
+}
+// (re)fill a project <select> for a company, keeping the current pick visible
+// even if it is now inactive or belongs to a different company
+function fillProjects(el, companyId, current) {
+  var list = projectsFor(companyId);
+  if (current && !list.some(function (p) { return Number(p.id) === Number(current); })) {
+    var cp = proj(current); if (cp) list = [cp].concat(list);
+  }
+  el.innerHTML = '<option value="">— none —</option>' + list.map(function (p) {
+    return '<option value="' + p.id + '"' + (String(p.id) === String(current) ? ' selected' : '') + '>' +
+      esc(p.name) + (p.code ? ' (' + esc(p.code) + ')' : '') + '</option>';
+  }).join('');
+  if (current) el.value = current;
+}
+function projTag(id) {
+  var p = proj(id); if (!p) return '';
+  return '<div style="color:var(--muted);font-size:11.5px">📍 ' + esc(p.name) + '</div>';
+}
 function toast(msg) {
   var t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(t._t); t._t = setTimeout(function () { t.classList.remove('show'); }, 2400);
@@ -81,6 +109,7 @@ function inRange(d, from, to) { if (from && d < from) return false; if (to && d 
 function txnsFiltered(f) {
   return S.txns.filter(function (t) {
     if (f.co && Number(t.company_id) !== Number(f.co)) return false;
+    if (f.proj && Number(t.project_id) !== Number(f.proj)) return false;
     if (f.type && t.type !== f.type) return false;
     if (f.cat && t.category !== f.cat) return false;
     if (f.status && t.status !== f.status) return false;
@@ -287,7 +316,10 @@ function applyPeriod(p, fromEl, toEl) {
   if (p === 'last12') { fromEl.value = iso(new Date(y, m - 11, 1)); toEl.value = todayISO(); return; }
 }
 function renderDash() {
-  var f = { co: $('#dashCo').value, from: $('#dashFrom').value, to: $('#dashTo').value };
+  var coVal = $('#dashCo').value;
+  var plist = (coVal ? projectsFor(coVal) : S.projects.filter(function (p) { return p.active; }));
+  fillSelect($('#dashProj'), plist.map(function (p) { return [p.id, p.name + (p.code ? ' (' + p.code + ')' : '')]; }), 'All projects / locations');
+  var f = { co: coVal, proj: $('#dashProj').value, from: $('#dashFrom').value, to: $('#dashTo').value };
   var list = txnsFiltered(f), t = totals(list);
   $$('.cur').forEach(function (e) { e.textContent = cur(); });
 
@@ -344,13 +376,14 @@ function renderDash() {
 
 /* --------------------------------------------------------- transactions */
 function txnFilter() {
-  return { co: $('#fCo').value, type: $('#fType').value, cat: $('#fCat').value, status: $('#fStatus').value, from: $('#fFrom').value, to: $('#fTo').value, q: $('#fSearch').value.trim() };
+  return { co: $('#fCo').value, proj: $('#fProj') ? $('#fProj').value : '', type: $('#fType').value, cat: $('#fCat').value, status: $('#fStatus').value, from: $('#fFrom').value, to: $('#fTo').value, q: $('#fSearch').value.trim() };
 }
 function txnTableHTML(list, actions) {
-  var h = '<thead><tr><th>Date</th><th>Company</th><th>Type</th><th>Category</th><th>Party</th><th>Invoice</th>' +
+  var h = '<thead><tr><th>Date</th><th>Company</th><th>Project / location</th><th>Type</th><th>Category</th><th>Party</th><th>Invoice</th>' +
     '<th class="num">Amount</th><th>Method</th><th>Status</th><th>Entered by</th>' + (actions ? '<th></th>' : '') + '</tr></thead><tbody>';
   list.forEach(function (t) {
     h += '<tr><td>' + esc(t.date) + '</td><td>' + coChip(t.company_id) + '</td>' +
+      '<td>' + (t.project_id ? esc(projName(t.project_id)) : '<span style="color:var(--muted)">—</span>') + '</td>' +
       '<td><span class="pill ' + t.type + '">' + (t.type === 'income' ? 'Income' : 'Expense') + '</span></td>' +
       '<td>' + esc(t.category) + '</td><td>' + esc(t.party || '—') + '</td><td>' + esc(t.invoice || '—') + '</td>' +
       '<td class="num"><b>' + money(amt(t)) + '</b></td><td>' + esc(t.method || '—') + '</td>' +
@@ -362,7 +395,7 @@ function txnTableHTML(list, actions) {
   h += '</tbody>';
   if (list.length) {
     var tt = totals(list);
-    h += '<tfoot><tr><td colspan="6">' + list.length + ' entries · income minus expense</td>' +
+    h += '<tfoot><tr><td colspan="7">' + list.length + ' entries · income minus expense</td>' +
       '<td class="num">' + money(tt.net) + '</td><td colspan="' + (actions ? 3 : 2) + '"></td></tr></tfoot>';
   }
   return h;
@@ -376,6 +409,9 @@ function fillSelect(el, pairs, allLabel, forceValue) {
 function renderTxn() {
   fillSelect($('#fCo'), S.companies.map(function (c) { return [c.id, c.name]; }), 'All companies');
   fillSelect($('#fCat'), S.expCats.concat(S.incCats).map(function (c) { return [c, c]; }), 'All categories');
+  var coVal = $('#fCo').value;
+  var plist = (coVal ? projectsFor(coVal) : S.projects.filter(function (p) { return p.active; }));
+  fillSelect($('#fProj'), plist.map(function (p) { return [p.id, p.name + (p.code ? ' (' + p.code + ')' : '')]; }), 'All projects / locations');
   var list = txnsFiltered(txnFilter()), t = totals(list);
   $('#txnSummary').innerHTML = [
     tile('Income · ' + cur(), money(t.income), list.length + ' entries shown'),
@@ -414,6 +450,7 @@ function txnForm(id) {
   var body = '<div class="form-grid">' +
     fld('Date', '<input type="date" id="tDate" value="' + esc(t.date) + '">') +
     fld('Company', sel('tCo', cos.map(function (c) { return [c.id, c.name]; }), t.company_id)) +
+    fld('Project / location', '<select id="tProj"></select>') +
     fld('Type', sel('tType', [['expense', 'Expense (money out)'], ['income', 'Income (money in)']], t.type)) +
     fld('Category', '<select id="tCat"></select>') +
     fld('Party (supplier / customer)', '<input type="text" id="tParty" value="' + esc(t.party) + '" placeholder="e.g. Al Noor Traders">') +
@@ -439,15 +476,16 @@ function txnForm(id) {
         : 'Marked paid, so it counts as settled.') + '</div>';
   }
   $('#tType').onchange = function () { refreshCats(); preview(); };
+  $('#tCo').onchange = function () { fillProjects($('#tProj'), this.value, ''); };
   ['tAmt', 'tStatus'].forEach(function (i) { $('#' + i).oninput = preview; $('#' + i).onchange = preview; });
-  refreshCats(); preview();
+  refreshCats(); fillProjects($('#tProj'), t.company_id, t.project_id); preview();
 
   $('#tSave').onclick = async function () {
     var val = parseFloat($('#tAmt').value);
     if (!$('#tDate').value) { alert('Please pick a date.'); return; }
     if (!(val > 0)) { alert('Please enter an amount greater than zero.'); return; }
     var rec = {
-      date: $('#tDate').value, company_id: Number($('#tCo').value), type: $('#tType').value,
+      date: $('#tDate').value, company_id: Number($('#tCo').value), project_id: $('#tProj').value || null, type: $('#tType').value,
       category: $('#tCat').value, party: $('#tParty').value.trim(), invoice: $('#tInv').value.trim(),
       amount: val, method: $('#tMethod').value, status: $('#tStatus').value, notes: $('#tNotes').value.trim()
     };
@@ -556,9 +594,53 @@ function renderReport() {
   var out = $('#reportOut');
   if (kind === 'pl') out.innerHTML = head + reportPL(list);
   else if (kind === 'cat') out.innerHTML = head + reportCat(list);
+  else if (kind === 'project') out.innerHTML = head + reportProject(list);
   else if (kind === 'ar') out.innerHTML = head + reportOpen(list, 'income');
   else if (kind === 'ap') out.innerHTML = head + reportOpen(list, 'expense');
   else if (kind === 'party') out.innerHTML = head + reportParty(list);
+}
+function reportProject(list) {
+  var csvRows = [['Company', 'Project / location', 'Income', 'Expense', 'Net result']];
+  var body = '', g = { i: 0, e: 0 }, shown = 0;
+  myCompanies().forEach(function (c) {
+    var buckets = projectsFor(c.id).map(function (p) { return { id: p.id, name: p.name + (p.code ? ' (' + p.code + ')' : '') }; });
+    // include any project that appears in the data but is no longer active
+    list.forEach(function (t) {
+      if (Number(t.company_id) === Number(c.id) && t.project_id &&
+        !buckets.some(function (b) { return Number(b.id) === Number(t.project_id); })) {
+        buckets.push({ id: t.project_id, name: projName(t.project_id) || ('#' + t.project_id) });
+      }
+    });
+    var noProj = list.filter(function (t) { return Number(t.company_id) === Number(c.id) && !t.project_id; });
+    if (!buckets.length && !noProj.length) return;   // company with nothing to show
+    if (!buckets.length) return;                      // no projects here — skip (covered by P&L)
+    var first = true;
+    buckets.forEach(function (b) {
+      var tt = totals(list.filter(function (t) { return Number(t.company_id) === Number(c.id) && Number(t.project_id) === Number(b.id); }));
+      g.i += tt.income; g.e += tt.expense; shown++;
+      body += '<tr><td>' + (first ? coChip(c.id) : '') + '</td><td>' + esc(b.name) + '</td>' +
+        '<td class="num">' + money(tt.income) + '</td><td class="num">' + money(tt.expense) + '</td>' +
+        '<td class="num ' + (tt.net >= 0 ? 'pos' : 'neg') + '"><b>' + money(tt.net) + '</b></td></tr>';
+      csvRows.push([c.name, b.name, tt.income.toFixed(2), tt.expense.toFixed(2), tt.net.toFixed(2)]);
+      first = false;
+    });
+    if (noProj.length) {
+      var tt2 = totals(noProj);
+      g.i += tt2.income; g.e += tt2.expense; shown++;
+      body += '<tr><td>' + (first ? coChip(c.id) : '') + '</td><td style="color:var(--muted)">— No project / location —</td>' +
+        '<td class="num">' + money(tt2.income) + '</td><td class="num">' + money(tt2.expense) + '</td>' +
+        '<td class="num ' + (tt2.net >= 0 ? 'pos' : 'neg') + '"><b>' + money(tt2.net) + '</b></td></tr>';
+      csvRows.push([c.name, 'No project / location', tt2.income.toFixed(2), tt2.expense.toFixed(2), tt2.net.toFixed(2)]);
+    }
+  });
+  var gn = g.i - g.e;
+  csvRows.push(['GROUP TOTAL', '', g.i.toFixed(2), g.e.toFixed(2), gn.toFixed(2)]);
+  lastReportRows = csvRows; lastReportName = 'project-breakdown';
+  if (!shown) return '<div class="empty card">No projects or locations have been set up yet. Add them under <b>Settings → Projects &amp; locations</b>, then tag entries to them.</div>';
+  return '<div class="table-wrap"><table><thead><tr><th>Company</th><th>Project / location</th>' +
+    '<th class="num">Income</th><th class="num">Expense</th><th class="num">Net result</th></tr></thead><tbody>' +
+    body + '</tbody><tfoot><tr><td colspan="2"><b>Group total</b></td><td class="num"><b>' + money(g.i) +
+    '</b></td><td class="num"><b>' + money(g.e) + '</b></td><td class="num ' + (gn >= 0 ? 'pos' : 'neg') + '"><b>' + money(gn) + '</b></td></tr></tfoot></table></div>';
 }
 function tbl(head, rows, foot) {
   return '<div class="table-wrap"><table><thead><tr>' + head.map(function (h, i) {
@@ -688,6 +770,45 @@ function renderSettings() {
     };
   });
 
+  // -------- projects / locations, grouped under each company --------
+  var ph = '<div class="table-wrap"><table><thead><tr><th>Company</th><th>Project / location</th><th>Code</th><th>Active</th><th></th></tr></thead><tbody>';
+  S.companies.forEach(function (c) {
+    var list = S.projects.filter(function (p) { return Number(p.company_id) === Number(c.id); });
+    if (!list.length) {
+      ph += '<tr><td>' + coChip(c.id) + '</td><td colspan="3" style="color:var(--muted)">No projects / locations yet</td>' +
+        '<td style="white-space:nowrap"><button class="btn sm" data-padd="' + c.id + '">+ Add</button></td></tr>';
+      return;
+    }
+    list.forEach(function (p, i) {
+      ph += '<tr><td>' + (i === 0 ? coChip(c.id) : '') + '</td>' +
+        '<td><input type="text" data-pn="' + p.id + '" value="' + esc(p.name) + '" style="min-width:180px"></td>' +
+        '<td><input type="text" data-pc="' + p.id + '" value="' + esc(p.code || '') + '" style="min-width:70px" maxlength="12"></td>' +
+        '<td style="text-align:center"><input type="checkbox" data-pa="' + p.id + '"' + (p.active ? ' checked' : '') + ' style="min-width:0;width:auto"></td>' +
+        '<td style="white-space:nowrap">' + (i === 0 ? '<button class="btn sm" data-padd="' + c.id + '">+ Add</button> ' : '') +
+        '<button class="btn sm danger" data-pdel="' + p.id + '">Remove</button></td></tr>';
+    });
+  });
+  $('#projList').innerHTML = ph + '</tbody></table></div>';
+  function saveProj(id) {
+    api('/api/projects/' + id, 'PUT', {
+      name: $('[data-pn="' + id + '"]').value, code: $('[data-pc="' + id + '"]').value,
+      active: $('[data-pa="' + id + '"]').checked
+    }).then(refresh).then(function () { toast('Project / location updated'); }).catch(fail);
+  }
+  $$('#projList [data-pn]').forEach(function (i) { i.onchange = function () { saveProj(i.dataset.pn); }; });
+  $$('#projList [data-pc]').forEach(function (i) { i.onchange = function () { saveProj(i.dataset.pc); }; });
+  $$('#projList [data-pa]').forEach(function (i) { i.onchange = function () { saveProj(i.dataset.pa); }; });
+  $$('#projList [data-padd]').forEach(function (b) { b.onclick = function () { projForm(Number(b.dataset.padd)); }; });
+  $$('#projList [data-pdel]').forEach(function (b) {
+    b.onclick = async function () {
+      var id = Number(b.dataset.pdel);
+      var n = S.txns.filter(function (t) { return Number(t.project_id) === id; }).length;
+      if (!confirm('Remove this project / location?' + (n ? '\n\n' + n + ' entries are tagged to it — they will be kept but shown as “no project”.' : ''))) return;
+      try { await api('/api/projects/' + id, 'DELETE'); await refresh(); renderSettings(); toast('Project / location removed'); }
+      catch (e) { fail(e); }
+    };
+  });
+
   var u = '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Companies</th><th>Status</th><th></th></tr></thead><tbody>';
   S.users.forEach(function (x) {
     var cos = x.role === 'admin' ? 'All companies' :
@@ -758,6 +879,28 @@ function userForm(id) {
     } catch (e) { this.disabled = false; fail(e); }
   };
 }
+function projForm(companyId) {
+  var cos = S.companies;
+  if (!cos.length) { alert('Add a company first.'); return; }
+  openModal('Add project / location',
+    '<div class="form-grid">' +
+    fld('Company', sel('pjCo', cos.map(function (c) { return [c.id, c.name]; }), companyId || cos[0].id)) +
+    fld('Name', '<input type="text" id="pjName" placeholder="e.g. Marina Tower site, Deira branch">') +
+    fld('Short code (optional)', '<input type="text" id="pjCode" maxlength="12" placeholder="e.g. MT1">') +
+    '<p class="full hint">Projects and locations are booked against costs, payments and cash so each site’s figures can be read on its own. Uncheck “Active” later to hide an old one without losing its history.</p>' +
+    '</div>',
+    '<button class="btn" data-close>Cancel</button><button class="btn primary" id="pjSave">Add</button>');
+  $('#pjName').focus();
+  $('#pjSave').onclick = async function () {
+    var name = $('#pjName').value.trim();
+    if (!name) { alert('Enter a name for the project / location.'); return; }
+    this.disabled = true;
+    try {
+      await api('/api/projects', 'POST', { company_id: Number($('#pjCo').value), name: name, code: $('#pjCode').value.trim() });
+      await refresh(); closeModal(); renderSettings(); toast('Project / location added');
+    } catch (e) { this.disabled = false; fail(e); }
+  };
+}
 
 
 /* ------------------------------------------------------- payment requests */
@@ -815,7 +958,7 @@ function renderPay() {
     if (r.status === 'approved' && isCashier()) act.push('<button class="btn sm primary" data-release="' + r.id + '">Release</button>');
     if (isAdmin() && r.status !== 'paid') act.push('<button class="btn sm danger" data-rdel="' + r.id + '">✕</button>');
     h += '<tr><td>' + esc(r.date) + (r.urgency === 'urgent' ? '<br><span class="pill urgent">Urgent</span>' : '') + '</td>' +
-      '<td>' + coChip(r.company_id) + '</td>' +
+      '<td>' + coChip(r.company_id) + projTag(r.project_id) + '</td>' +
       '<td class="work">' + esc(r.work || '—') + (r.notes ? '<div style="color:var(--muted);font-size:12px">' + esc(r.notes) + '</div>' : '') + '</td>' +
       '<td>' + esc(r.party || '—') + '</td><td>' + esc(r.invoice || '—') + '</td>' +
       '<td class="num"><b>' + money(reqAmount(r)) + '</b>' +
@@ -852,6 +995,7 @@ function reqForm(id) {
     '<div class="form-grid">' +
     fld('Request date', '<input type="date" id="qDate" value="' + esc(r.date) + '">') +
     fld('Company', sel('qCo', cos.map(function (c) { return [c.id, c.name]; }), r.company_id)) +
+    fld('Project / location', '<select id="qProj"></select>') +
     '<div class="field full"><label for="qWork">Work / purpose of payment</label>' +
     '<input type="text" id="qWork" value="' + esc(r.work) + '" placeholder="e.g. Steel supply for 2nd floor slab"></div>' +
     fld('Pay to (party)', '<input type="text" id="qParty" value="' + esc(r.party) + '" placeholder="e.g. Sri Balaji Building Materials">') +
@@ -864,12 +1008,14 @@ function reqForm(id) {
     '</div>',
     '<button class="btn" data-close>Cancel</button><button class="btn primary" id="qSave">' + (isNew ? 'Send for approval' : 'Save changes') + '</button>');
   fillSelect($('#qCat'), S.expCats.map(function (c) { return [c, c]; }), null, S.expCats.indexOf(r.category) >= 0 ? r.category : S.expCats[0]);
+  fillProjects($('#qProj'), r.company_id, r.project_id);
+  $('#qCo').onchange = function () { fillProjects($('#qProj'), this.value, ''); };
   $('#qSave').onclick = async function () {
     var val = parseFloat($('#qAmt').value);
     if (!(val > 0)) { alert('Enter the amount required.'); return; }
     if (!$('#qWork').value.trim() && !$('#qParty').value.trim()) { alert('Describe the work, or name the party being paid.'); return; }
     var body = {
-      date: $('#qDate').value, company_id: Number($('#qCo').value), work: $('#qWork').value.trim(),
+      date: $('#qDate').value, company_id: Number($('#qCo').value), project_id: $('#qProj').value || null, work: $('#qWork').value.trim(),
       party: $('#qParty').value.trim(), invoice: $('#qInv').value.trim(), invoice_date: $('#qInvDate').value || null,
       category: $('#qCat').value, requested_amount: val, urgency: $('#qUrg').value, notes: $('#qNotes').value.trim()
     };
@@ -1053,7 +1199,7 @@ function renderCash() {
   var r = '<thead><tr><th>Date</th><th>Company</th><th class="num">Amount</th><th>Source of money</th><th>Reference</th>' +
     '<th>Notes</th><th>Entered by</th>' + (isCashier() ? '<th></th>' : '') + '</tr></thead><tbody>';
   list.forEach(function (c) {
-    r += '<tr><td>' + esc(c.date) + '</td><td>' + coChip(c.company_id) + '</td>' +
+    r += '<tr><td>' + esc(c.date) + '</td><td>' + coChip(c.company_id) + projTag(c.project_id) + '</td>' +
       '<td class="num"><b>' + money(c.amount) + '</b></td>' +
       '<td>' + esc(c.source || '—') + (c.txn_id ? '<div style="color:var(--muted);font-size:11.5px">also booked as income</div>' : '') + '</td>' +
       '<td>' + esc(c.ref || '—') + '</td><td>' + esc(c.notes || '—') + '</td>' +
@@ -1103,6 +1249,7 @@ function cashInForm(id, presetCo) {
     '<div class="form-grid">' +
     fld('Date received', '<input type="date" id="nDate" value="' + esc(c.date) + '">') +
     fld('Company', sel('nCo', cos.map(function (x) { return [x.id, x.name]; }), c.company_id)) +
+    fld('Project / location', '<select id="nProj"></select>') +
     fld('Amount (' + cur() + ')', '<input type="number" id="nAmt" step="0.01" min="0" value="' + esc(c.amount) + '">') +
     fld('Source of money', sel('nSrc', S.sources.map(function (x) { return [x, x]; }), c.source)) +
     fld('Reference (receipt / slip no.)', '<input type="text" id="nRef" value="' + esc(c.ref) + '">') +
@@ -1128,13 +1275,15 @@ function cashInForm(id, presetCo) {
     $('#nHint').innerHTML = 'Cash in hand for ' + esc(co($('#nCo').value).name) + ' is <b>' + cur() + ' ' + money(p.expected) +
       '</b>' + (v ? ' — this receipt takes it to <b>' + cur() + ' ' + money(p.expected + v) + '</b>' : '') + '.';
   }
-  $('#nCo').onchange = hint; $('#nAmt').oninput = hint; hint();
+  fillProjects($('#nProj'), c.company_id, c.project_id);
+  $('#nCo').onchange = function () { fillProjects($('#nProj'), this.value, ''); hint(); };
+  $('#nAmt').oninput = hint; hint();
   $('#nSave').onclick = async function () {
     var v = parseFloat($('#nAmt').value);
     if (!(v > 0)) { alert('Enter the amount received.'); return; }
     if (!$('#nSrc').value) { alert('Choose where the money came from.'); return; }
     var body = {
-      date: $('#nDate').value, company_id: Number($('#nCo').value), amount: v,
+      date: $('#nDate').value, company_id: Number($('#nCo').value), project_id: $('#nProj').value || null, amount: v,
       source: $('#nSrc').value, ref: $('#nRef').value.trim(), notes: $('#nNotes').value.trim()
     };
     if (isNew && $('#nInc').checked) {
@@ -1204,9 +1353,9 @@ function csv(rows) {
   }).join('\r\n');
 }
 function txnRows(list) {
-  var rows = [['Date', 'Company', 'Type', 'Category', 'Party', 'Invoice', 'Amount', 'Method', 'Status', 'Entered by', 'Notes']];
+  var rows = [['Date', 'Company', 'Project / location', 'Type', 'Category', 'Party', 'Invoice', 'Amount', 'Method', 'Status', 'Entered by', 'Notes']];
   list.forEach(function (t) {
-    rows.push([t.date, co(t.company_id).name, t.type, t.category, t.party, t.invoice,
+    rows.push([t.date, co(t.company_id).name, projName(t.project_id), t.type, t.category, t.party, t.invoice,
       amt(t).toFixed(2), t.method, t.status, t.by || '', t.notes]);
   });
   return rows;
@@ -1224,7 +1373,7 @@ function exportInter() {
 }
 function exportAll() {
   download('group-accounts-' + todayISO() + '.json', JSON.stringify({
-    exportedAt: new Date().toISOString(), settings: S.settings, companies: S.companies,
+    exportedAt: new Date().toISOString(), settings: S.settings, companies: S.companies, projects: S.projects,
     expCats: S.expCats, incCats: S.incCats, methods: S.methods, txns: S.txns, transfers: S.transfers
   }, null, 2), 'application/json');
   toast('Export downloaded');
@@ -1273,10 +1422,10 @@ async function boot() {
   $('#pSearch').oninput = renderPay;
   $('#btnAddReq').onclick = function () { reqForm(null); };
   $('#btnExportPay').onclick = function () {
-    var rows = [['Raised', 'Company', 'Work', 'Party', 'Invoice', 'Requested', 'Approved', 'Status',
+    var rows = [['Raised', 'Company', 'Project / location', 'Work', 'Party', 'Invoice', 'Requested', 'Approved', 'Status',
       'Raised by', 'Approved by', 'Approved at', 'Released by', 'Released at', 'Paid by method', 'Reference', 'Note']];
     payFiltered().forEach(function (r) {
-      rows.push([r.date, co(r.company_id).name, r.work, r.party, r.invoice,
+      rows.push([r.date, co(r.company_id).name, projName(r.project_id), r.work, r.party, r.invoice,
         Number(r.requested_amount).toFixed(2), r.approved_amount == null ? '' : Number(r.approved_amount).toFixed(2),
         r.status, r.requested_by || '', r.approved_by || '', r.approved_at || '', r.paid_by || '', r.paid_at || '',
         r.paid_method || '', r.paid_ref || '', r.approval_note || '']);
@@ -1289,9 +1438,9 @@ async function boot() {
   $('#btnAddCashIn').onclick = function () { cashInForm(null); };
   $('#btnAddCount').onclick = function () { cashForm(null); };
   $('#btnExportCash').onclick = function () {
-    var rows = [['Date', 'Company', 'Amount received', 'Source of money', 'Reference', 'Notes', 'Entered by', 'Also booked as income']];
+    var rows = [['Date', 'Company', 'Project / location', 'Amount received', 'Source of money', 'Reference', 'Notes', 'Entered by', 'Also booked as income']];
     cashInFiltered().forEach(function (c) {
-      rows.push([c.date, co(c.company_id).name, Number(c.amount).toFixed(2), c.source, c.ref, c.notes, c.by || '', c.txn_id ? 'yes' : 'no']);
+      rows.push([c.date, co(c.company_id).name, projName(c.project_id), Number(c.amount).toFixed(2), c.source, c.ref, c.notes, c.by || '', c.txn_id ? 'yes' : 'no']);
     });
     rows.push([]);
     rows.push(['CASH COUNTS']);
@@ -1303,15 +1452,15 @@ async function boot() {
   updateBadge();
 
   fillSelect($('#dashCo'), myCompanies().map(function (c) { return [c.id, c.name]; }), 'All companies (group)');
-  ['#dashCo', '#dashFrom', '#dashTo'].forEach(function (s) {
-    $(s).onchange = function () { if (s !== '#dashCo') $('#dashPeriod').value = 'custom'; renderDash(); };
+  ['#dashCo', '#dashProj', '#dashFrom', '#dashTo'].forEach(function (s) {
+    $(s).onchange = function () { if (s !== '#dashCo' && s !== '#dashProj') $('#dashPeriod').value = 'custom'; renderDash(); };
   });
   $('#dashPeriod').onchange = function () { applyPeriod(this.value, $('#dashFrom'), $('#dashTo')); renderDash(); };
-  $('#dashReset').onclick = function () { $('#dashCo').value = ''; $('#dashPeriod').value = 'all'; $('#dashFrom').value = ''; $('#dashTo').value = ''; renderDash(); };
+  $('#dashReset').onclick = function () { $('#dashCo').value = ''; $('#dashProj').value = ''; $('#dashPeriod').value = 'all'; $('#dashFrom').value = ''; $('#dashTo').value = ''; renderDash(); };
 
-  ['#fCo', '#fType', '#fCat', '#fStatus', '#fFrom', '#fTo'].forEach(function (s) { $(s).onchange = renderTxn; });
+  ['#fCo', '#fProj', '#fType', '#fCat', '#fStatus', '#fFrom', '#fTo'].forEach(function (s) { $(s).onchange = renderTxn; });
   $('#fSearch').oninput = renderTxn;
-  $('#fReset').onclick = function () { ['#fCo', '#fType', '#fCat', '#fStatus', '#fFrom', '#fTo', '#fSearch'].forEach(function (s) { $(s).value = ''; }); renderTxn(); };
+  $('#fReset').onclick = function () { ['#fCo', '#fProj', '#fType', '#fCat', '#fStatus', '#fFrom', '#fTo', '#fSearch'].forEach(function (s) { $(s).value = ''; }); renderTxn(); };
   $('#btnAddTxn').onclick = function () { txnForm(null); };
   $('#btnExportTxn').onclick = exportTxns;
 
@@ -1349,6 +1498,7 @@ async function boot() {
     try { await api('/api/companies', 'POST', { name: n }); await refresh(); renderSettings(); toast('Company added'); }
     catch (e) { fail(e); }
   };
+  $('#btnAddProj').onclick = function () { projForm(null); };
   $('#btnAddUser').onclick = function () { userForm(null); };
   $('#btnPw').onclick = async function () {
     try {

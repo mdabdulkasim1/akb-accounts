@@ -102,11 +102,13 @@ app.post('/api/password', wrap(async (req, res) => {
 app.get('/api/data', wrap(async (req, res) => {
   if (!need(req, res)) return;
   const mine = await allowedCompanies(req.user);
-  const [st, cos, cats, tx, tr] = await Promise.all([
+  const [st, cos, cats, projs, tx, tr] = await Promise.all([
     q('SELECT * FROM settings WHERE id = 1'),
     q('SELECT id, name, code, color FROM companies WHERE active ORDER BY sort, id'),
     q('SELECT kind, name FROM categories ORDER BY kind, sort, name'),
-    q(`SELECT t.id, to_char(t.tdate,'YYYY-MM-DD') AS date, t.company_id, t.type, t.category, t.party,
+    q(`SELECT id, company_id, name, code, active FROM projects
+        WHERE company_id = ANY($1::int[]) ORDER BY sort, id`, [mine]),
+    q(`SELECT t.id, to_char(t.tdate,'YYYY-MM-DD') AS date, t.company_id, t.project_id, t.type, t.category, t.party,
               t.invoice, t.amount::float8 AS amount, t.method, t.status, t.notes, u.name AS by
          FROM txns t LEFT JOIN users u ON u.id = t.created_by
         WHERE t.company_id = ANY($1::int[]) ORDER BY t.tdate DESC, t.id DESC`, [mine]),
@@ -119,7 +121,7 @@ app.get('/api/data', wrap(async (req, res) => {
       : Promise.resolve({ rows: [] })
   ]);
   const [pr, cash, cashIn] = await Promise.all([
-    q(`SELECT p.id, to_char(p.rdate,'YYYY-MM-DD') AS date, p.company_id, p.work, p.party, p.invoice,
+    q(`SELECT p.id, to_char(p.rdate,'YYYY-MM-DD') AS date, p.company_id, p.project_id, p.work, p.party, p.invoice,
               to_char(p.invoice_date,'YYYY-MM-DD') AS invoice_date, p.category,
               p.requested_amount::float8 AS requested_amount, p.approved_amount::float8 AS approved_amount,
               p.urgency, p.notes, p.status, p.approval_note, p.paid_method, p.paid_ref, p.txn_id,
@@ -137,7 +139,7 @@ app.get('/api/data', wrap(async (req, res) => {
          FROM cash_counts c LEFT JOIN users u ON u.id = c.created_by
         WHERE c.company_id = ANY($1::int[])
         ORDER BY c.cdate DESC, c.id DESC`, [mine]),
-    q(`SELECT c.id, to_char(c.cdate,'YYYY-MM-DD') AS date, c.company_id, c.amount::float8 AS amount,
+    q(`SELECT c.id, to_char(c.cdate,'YYYY-MM-DD') AS date, c.company_id, c.project_id, c.amount::float8 AS amount,
               c.source, c.ref, c.notes, c.txn_id, u.name AS by
          FROM cash_in c LEFT JOIN users u ON u.id = c.created_by
         WHERE c.company_id = ANY($1::int[])
@@ -156,6 +158,7 @@ app.get('/api/data', wrap(async (req, res) => {
     me: { id: req.user.id, name: req.user.name, email: req.user.email, role: req.user.role, companyIds: mine, mustChange: req.user.must_change },
     settings: { group: s.group_name, currency: s.currency, fyStart: s.fy_start },
     companies: cos.rows,
+    projects: projs.rows,
     expCats: cats.rows.filter(c => c.kind === 'expense').map(c => c.name),
     incCats: cats.rows.filter(c => c.kind === 'income').map(c => c.name),
     methods: cats.rows.filter(c => c.kind === 'method').map(c => c.name),
@@ -170,6 +173,7 @@ function cleanReq(b) {
   return {
     date: String(b.date || '').slice(0, 10),
     company_id: parseInt(b.company_id, 10),
+    project_id: b.project_id,
     work: String(b.work || '').slice(0, 400),
     party: String(b.party || '').slice(0, 160),
     invoice: String(b.invoice || '').slice(0, 60),
@@ -187,11 +191,13 @@ app.post('/api/requests', wrap(async (req, res) => {
   if (!r.date || !r.company_id || !(r.requested_amount > 0)) return res.status(400).json({ error: 'Date, company and a positive amount are required.' });
   if (!r.work && !r.party) return res.status(400).json({ error: 'Describe the work or name the party being paid.' });
   if (!await assertCompany(req, res, r.company_id)) return;
+  const pr = await resolveProjectId(r.project_id, r.company_id);
+  if (!pr.ok) return res.status(400).json({ error: 'That project / location does not belong to the selected company.' });
   const { rows } = await q(
-    `INSERT INTO payment_requests (rdate, company_id, work, party, invoice, invoice_date, category,
+    `INSERT INTO payment_requests (rdate, company_id, project_id, work, party, invoice, invoice_date, category,
        requested_amount, urgency, notes, requested_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-    [r.date, r.company_id, r.work, r.party, r.invoice, r.invoice_date, r.category,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+    [r.date, r.company_id, pr.id, r.work, r.party, r.invoice, r.invoice_date, r.category,
     r.requested_amount, r.urgency, r.notes, req.user.id]);
   await q('INSERT INTO audit (user_id, user_name, action, detail) VALUES ($1,$2,$3,$4)',
     [req.user.id, req.user.name, 'raised payment request', `#${rows[0].id} ${r.requested_amount}`]);
@@ -210,9 +216,11 @@ app.put('/api/requests/:id', wrap(async (req, res) => {
   const r = cleanReq(req.body);
   if (!r.date || !r.company_id || !(r.requested_amount > 0)) return res.status(400).json({ error: 'Date, company and a positive amount are required.' });
   if (!await assertCompany(req, res, r.company_id)) return;
-  await q(`UPDATE payment_requests SET rdate=$1, company_id=$2, work=$3, party=$4, invoice=$5, invoice_date=$6,
-           category=$7, requested_amount=$8, urgency=$9, notes=$10 WHERE id=$11`,
-    [r.date, r.company_id, r.work, r.party, r.invoice, r.invoice_date, r.category, r.requested_amount, r.urgency, r.notes, id]);
+  const pr = await resolveProjectId(r.project_id, r.company_id);
+  if (!pr.ok) return res.status(400).json({ error: 'That project / location does not belong to the selected company.' });
+  await q(`UPDATE payment_requests SET rdate=$1, company_id=$2, project_id=$3, work=$4, party=$5, invoice=$6, invoice_date=$7,
+           category=$8, requested_amount=$9, urgency=$10, notes=$11 WHERE id=$12`,
+    [r.date, r.company_id, pr.id, r.work, r.party, r.invoice, r.invoice_date, r.category, r.requested_amount, r.urgency, r.notes, id]);
   res.json({ ok: true });
 }));
 
@@ -259,9 +267,9 @@ app.post('/api/requests/:id/release', wrap(async (req, res) => {
     if (ex[0].status !== 'approved') throw new Error('Only an approved request can be released.');
     const amount = Number(ex[0].approved_amount);
     const { rows: t } = await client.query(
-      `INSERT INTO txns (tdate, company_id, type, category, party, invoice, amount, method, status, notes, created_by)
-       VALUES ($1,$2,'expense',$3,$4,$5,$6,$7,'paid',$8,$9) RETURNING id`,
-      [payDate || new Date().toISOString().slice(0, 10), ex[0].company_id, ex[0].category || 'Miscellaneous',
+      `INSERT INTO txns (tdate, company_id, project_id, type, category, party, invoice, amount, method, status, notes, created_by)
+       VALUES ($1,$2,$3,'expense',$4,$5,$6,$7,$8,'paid',$9,$10) RETURNING id`,
+      [payDate || new Date().toISOString().slice(0, 10), ex[0].company_id, ex[0].project_id, ex[0].category || 'Miscellaneous',
       ex[0].party, ex[0].invoice, amount, method,
       ('Released against payment request #' + id + (ex[0].work ? ' — ' + ex[0].work : '')).slice(0, 2000), req.user.id]);
     await client.query(
@@ -319,6 +327,8 @@ app.post('/api/cashin', wrap(async (req, res) => {
   if (!company_id || !date || !(amount > 0)) return res.status(400).json({ error: 'Company, date and a positive amount are required.' });
   if (!source) return res.status(400).json({ error: 'Please choose where the money came from.' });
   if (!await assertCompany(req, res, company_id)) return;
+  const proj = await resolveProjectId(req.body.project_id, company_id);
+  if (!proj.ok) return res.status(400).json({ error: 'That project / location does not belong to the selected company.' });
 
   // when the cash is business income it also becomes an income entry, so the
   // books and the cash box are updated from a single entry and never twice
@@ -330,16 +340,16 @@ app.post('/api/cashin', wrap(async (req, res) => {
     if (asIncome) {
       const cat = String(req.body.incomeCategory || '').slice(0, 120) || 'Other Income';
       const { rows: t } = await client.query(
-        `INSERT INTO txns (tdate, company_id, type, category, party, invoice, amount, method, status, notes, created_by)
-         VALUES ($1,$2,'income',$3,$4,$5,$6,'Cash','paid',$7,$8) RETURNING id`,
-        [date, company_id, cat, String(req.body.party || '').slice(0, 160), ref, amount,
+        `INSERT INTO txns (tdate, company_id, project_id, type, category, party, invoice, amount, method, status, notes, created_by)
+         VALUES ($1,$2,$3,'income',$4,$5,$6,$7,'Cash','paid',$8,$9) RETURNING id`,
+        [date, company_id, proj.id, cat, String(req.body.party || '').slice(0, 160), ref, amount,
         ('Cash received — ' + source + (notes ? ' — ' + notes : '')).slice(0, 2000), req.user.id]);
       txnId = t[0].id;
     }
     const { rows } = await client.query(
-      `INSERT INTO cash_in (company_id, cdate, amount, source, ref, notes, txn_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [company_id, date, amount, source, ref, notes, txnId, req.user.id]);
+      `INSERT INTO cash_in (company_id, project_id, cdate, amount, source, ref, notes, txn_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [company_id, proj.id, date, amount, source, ref, notes, txnId, req.user.id]);
     await client.query('INSERT INTO audit (user_id, user_name, action, detail) VALUES ($1,$2,$3,$4)',
       [req.user.id, req.user.name, 'recorded cash received', `${amount} — ${source}`]);
     await client.query('COMMIT');
@@ -360,10 +370,12 @@ app.put('/api/cashin/:id', wrap(async (req, res) => {
   const { rows: ex } = await q('SELECT company_id, txn_id FROM cash_in WHERE id = $1', [id]);
   if (!ex[0]) return res.status(404).json({ error: 'That entry no longer exists.' });
   if (!await assertCompany(req, res, ex[0].company_id)) return;
-  await q('UPDATE cash_in SET cdate=$1, amount=$2, source=$3, ref=$4, notes=$5 WHERE id=$6',
-    [date, amount, source, String(req.body.ref || ''), String(req.body.notes || ''), id]);
+  const proj = await resolveProjectId(req.body.project_id, ex[0].company_id);
+  if (!proj.ok) return res.status(400).json({ error: 'That project / location does not belong to the selected company.' });
+  await q('UPDATE cash_in SET cdate=$1, amount=$2, source=$3, ref=$4, notes=$5, project_id=$6 WHERE id=$7',
+    [date, amount, source, String(req.body.ref || ''), String(req.body.notes || ''), proj.id, id]);
   // keep the linked income entry in step
-  if (ex[0].txn_id) await q('UPDATE txns SET tdate=$1, amount=$2, updated_at=now() WHERE id=$3', [date, amount, ex[0].txn_id]);
+  if (ex[0].txn_id) await q('UPDATE txns SET tdate=$1, amount=$2, project_id=$3, updated_at=now() WHERE id=$4', [date, amount, proj.id, ex[0].txn_id]);
   res.json({ ok: true });
 }));
 
@@ -389,6 +401,7 @@ function cleanTxn(b) {
   return {
     date: String(b.date || '').slice(0, 10),
     company_id: parseInt(b.company_id, 10),
+    project_id: b.project_id,
     type: b.type === 'income' ? 'income' : 'expense',
     category: String(b.category || '').slice(0, 120),
     party: String(b.party || '').slice(0, 160),
@@ -404,16 +417,27 @@ async function assertCompany(req, res, companyId) {
   if (!mine.includes(companyId)) { res.status(403).json({ error: 'You do not have access to that company.' }); return false; }
   return true;
 }
+// a project / location is optional; when given it must belong to the company
+// the entry is booked against. Returns { ok, id } — id is null when none.
+async function resolveProjectId(rawProjectId, companyId) {
+  const pid = parseInt(rawProjectId, 10);
+  if (!pid) return { ok: true, id: null };
+  const { rows } = await q('SELECT 1 FROM projects WHERE id = $1 AND company_id = $2', [pid, companyId]);
+  if (!rows.length) return { ok: false };
+  return { ok: true, id: pid };
+}
 
 app.post('/api/txns', wrap(async (req, res) => {
   if (!need(req, res)) return;
   const t = cleanTxn(req.body);
   if (!t.date || !t.company_id || !(t.amount > 0)) return res.status(400).json({ error: 'Date, company and a positive amount are required.' });
   if (!await assertCompany(req, res, t.company_id)) return;
+  const pr = await resolveProjectId(t.project_id, t.company_id);
+  if (!pr.ok) return res.status(400).json({ error: 'That project / location does not belong to the selected company.' });
   const { rows } = await q(
-    `INSERT INTO txns (tdate, company_id, type, category, party, invoice, amount, method, status, notes, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-    [t.date, t.company_id, t.type, t.category, t.party, t.invoice, t.amount, t.method, t.status, t.notes, req.user.id]);
+    `INSERT INTO txns (tdate, company_id, project_id, type, category, party, invoice, amount, method, status, notes, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+    [t.date, t.company_id, pr.id, t.type, t.category, t.party, t.invoice, t.amount, t.method, t.status, t.notes, req.user.id]);
   await q('INSERT INTO audit (user_id, user_name, action, detail) VALUES ($1,$2,$3,$4)',
     [req.user.id, req.user.name, 'added entry', `#${rows[0].id} ${t.type} ${t.amount}`]);
   res.json({ ok: true, id: rows[0].id });
@@ -428,9 +452,11 @@ app.put('/api/txns/:id', wrap(async (req, res) => {
   const t = cleanTxn(req.body);
   if (!t.date || !t.company_id || !(t.amount > 0)) return res.status(400).json({ error: 'Date, company and a positive amount are required.' });
   if (!await assertCompany(req, res, t.company_id)) return;
-  await q(`UPDATE txns SET tdate=$1, company_id=$2, type=$3, category=$4, party=$5, invoice=$6,
-           amount=$7, method=$8, status=$9, notes=$10, updated_at=now() WHERE id=$11`,
-    [t.date, t.company_id, t.type, t.category, t.party, t.invoice, t.amount, t.method, t.status, t.notes, id]);
+  const pr = await resolveProjectId(t.project_id, t.company_id);
+  if (!pr.ok) return res.status(400).json({ error: 'That project / location does not belong to the selected company.' });
+  await q(`UPDATE txns SET tdate=$1, company_id=$2, project_id=$3, type=$4, category=$5, party=$6, invoice=$7,
+           amount=$8, method=$9, status=$10, notes=$11, updated_at=now() WHERE id=$12`,
+    [t.date, t.company_id, pr.id, t.type, t.category, t.party, t.invoice, t.amount, t.method, t.status, t.notes, id]);
   await q('INSERT INTO audit (user_id, user_name, action, detail) VALUES ($1,$2,$3,$4)',
     [req.user.id, req.user.name, 'edited entry', `#${id}`]);
   res.json({ ok: true });
@@ -504,6 +530,44 @@ app.put('/api/companies/:id', wrap(async (req, res) => {
 app.delete('/api/companies/:id', wrap(async (req, res) => {
   if (!needAdmin(req, res)) return;
   await q('DELETE FROM companies WHERE id = $1', [parseInt(req.params.id, 10)]);
+  res.json({ ok: true });
+}));
+
+/* --------------------------------------------------- projects / locations */
+app.post('/api/projects', wrap(async (req, res) => {
+  if (!needAdmin(req, res)) return;
+  const company_id = parseInt(req.body.company_id, 10);
+  const name = String(req.body.name || '').trim();
+  if (!company_id) return res.status(400).json({ error: 'Choose the company this project / location belongs to.' });
+  if (!name) return res.status(400).json({ error: 'A name is required.' });
+  const { rows: co } = await q('SELECT 1 FROM companies WHERE id = $1', [company_id]);
+  if (!co.length) return res.status(400).json({ error: 'That company no longer exists.' });
+  const { rows: n } = await q('SELECT count(*)::int AS n FROM projects WHERE company_id = $1', [company_id]);
+  const { rows } = await q('INSERT INTO projects (company_id, name, code, sort) VALUES ($1,$2,$3,$4) RETURNING id',
+    [company_id, name.slice(0, 120), String(req.body.code || '').toUpperCase().slice(0, 12), n[0].n]);
+  await q('INSERT INTO audit (user_id, user_name, action, detail) VALUES ($1,$2,$3,$4)',
+    [req.user.id, req.user.name, 'added project / location', name]);
+  res.json({ ok: true, id: rows[0].id });
+}));
+
+app.put('/api/projects/:id', wrap(async (req, res) => {
+  if (!needAdmin(req, res)) return;
+  const id = parseInt(req.params.id, 10);
+  const b = req.body;
+  await q(`UPDATE projects SET name = COALESCE($1, name), code = COALESCE($2, code), active = COALESCE($3, active) WHERE id = $4`,
+    [b.name !== undefined ? String(b.name).trim().slice(0, 120) || 'Unnamed' : null,
+    b.code !== undefined ? String(b.code).toUpperCase().slice(0, 12) : null,
+    typeof b.active === 'boolean' ? b.active : null, id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/projects/:id', wrap(async (req, res) => {
+  if (!needAdmin(req, res)) return;
+  const id = parseInt(req.params.id, 10);
+  // entries keep their history — project_id is set to NULL by the FK rule
+  await q('DELETE FROM projects WHERE id = $1', [id]);
+  await q('INSERT INTO audit (user_id, user_name, action, detail) VALUES ($1,$2,$3,$4)',
+    [req.user.id, req.user.name, 'removed project / location', `#${id}`]);
   res.json({ ok: true });
 }));
 
