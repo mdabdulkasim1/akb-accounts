@@ -1,0 +1,15 @@
+[Unit]
+Description=AKB Group Accounts Web Application
+After=network.target mariadb.service
+
+[Service]
+Type=simple
+User=accountsakbgroup
+WorkingDirectory=/home/accountsakbgroup/public_html
+ExecStart=/usr/bin/node /home/accountsakbgroup/public_html/server.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production PORT=3020
+
+[Install]
+WantedBy=multi-user.target

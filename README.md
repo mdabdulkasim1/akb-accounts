@@ -52,14 +52,32 @@ One shared PostgreSQL database, so everyone signed in sees the same figures at t
 | `NODE_ENV` | yes in production | Set to `production` so the login cookie is marked secure |
 | `PORT` | no | Set automatically by Railway |
 
-The database schema is created automatically on first start, along with the five
-companies, the category lists and the first administrator. Nothing to run by hand.
+## Database Management & Deployment Commands
+
+You can run migration and seeding scripts manually or during deployment:
+
+```bash
+# Run both migrations and initial data seeding with detailed logs:
+npm run db:setup
+
+# Run table migrations only:
+npm run db:migrate
+
+# Run data seeder only (companies, categories, admin user):
+npm run db:seed
+```
+
+Alternatively, you can import the raw MySQL schema directly:
+```bash
+mysql -u root -p akb-accounts < schema.sql
+```
 
 ## Running locally
 
 ```bash
 npm install
 cp .env.example .env      # then edit the values
+npm run db:setup          # optional: run explicitly before start
 npm start                 # http://localhost:3000
 ```
 

@@ -9,7 +9,8 @@ const rateLimit = require('express-rate-limit');
 const { q, pool, migrate, seed } = require('./db');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const argPort = (process.argv.find(a => a.startsWith('--port=')) || '').split('=')[1];
+const PORT = parseInt(argPort || process.env.PORT || 3000, 10);
 const SECRET = process.env.SESSION_SECRET || 'dev-only-secret-change-me';
 const PROD = process.env.NODE_ENV === 'production';
 const COOKIE = 'akb_session';
@@ -34,10 +35,14 @@ async function loadUser(req, res, next) {
     const p = jwt.verify(t, SECRET);
     const { rows } = await q(
       `SELECT u.id, u.email, u.name, u.role, u.active, u.must_change,
-              COALESCE(array_agg(uc.company_id) FILTER (WHERE uc.company_id IS NOT NULL), '{}') AS company_ids
+              GROUP_CONCAT(uc.company_id) AS company_ids_str
          FROM users u LEFT JOIN user_companies uc ON uc.user_id = u.id
         WHERE u.id = $1 GROUP BY u.id`, [p.id]);
-    if (rows[0] && rows[0].active) req.user = rows[0];
+    if (rows[0] && rows[0].active) {
+      const u = rows[0];
+      u.company_ids = u.company_ids_str ? u.company_ids_str.split(',').filter(Boolean).map(Number) : [];
+      req.user = u;
+    }
   } catch (e) { /* invalid or expired token */ }
   next();
 }
@@ -102,56 +107,60 @@ app.post('/api/password', wrap(async (req, res) => {
 app.get('/api/data', wrap(async (req, res) => {
   if (!need(req, res)) return;
   const mine = await allowedCompanies(req.user);
+  const mineIds = mine.length ? mine : [0];
   const [st, cos, cats, projs, tx, tr] = await Promise.all([
     q('SELECT * FROM settings WHERE id = 1'),
     q('SELECT id, name, code, color FROM companies WHERE active ORDER BY sort, id'),
     q('SELECT kind, name FROM categories ORDER BY kind, sort, name'),
     q(`SELECT id, company_id, name, code, active FROM projects
-        WHERE company_id = ANY($1::int[]) ORDER BY sort, id`, [mine]),
-    q(`SELECT t.id, to_char(t.tdate,'YYYY-MM-DD') AS date, t.company_id, t.project_id, t.type, t.category, t.party,
-              t.invoice, t.amount::float8 AS amount, t.method, t.status, t.notes, u.name AS by
+        WHERE company_id IN (?) ORDER BY sort, id`, [mineIds]),
+    q(`SELECT t.id, DATE_FORMAT(t.tdate,'%Y-%m-%d') AS date, t.company_id, t.project_id, t.type, t.category, t.party,
+              t.invoice, t.amount AS amount, t.method, t.status, t.notes, u.name AS \`by\`
          FROM txns t LEFT JOIN users u ON u.id = t.created_by
-        WHERE t.company_id = ANY($1::int[]) ORDER BY t.tdate DESC, t.id DESC`, [mine]),
+        WHERE t.company_id IN (?) ORDER BY t.tdate DESC, t.id DESC`, [mineIds]),
     // inter-company movement is group-level information: administrators only
     req.user.role === 'admin'
-      ? q(`SELECT r.id, to_char(r.tdate,'YYYY-MM-DD') AS date, r.from_id, r.to_id, r.amount::float8 AS amount,
-                  r.purpose, r.ref, u.name AS by
+      ? q(`SELECT r.id, DATE_FORMAT(r.tdate,'%Y-%m-%d') AS date, r.from_id, r.to_id, r.amount AS amount,
+                  r.purpose, r.ref, u.name AS \`by\`
              FROM transfers r LEFT JOIN users u ON u.id = r.created_by
             ORDER BY r.tdate DESC, r.id DESC`)
       : Promise.resolve({ rows: [] })
   ]);
   const [pr, cash, cashIn] = await Promise.all([
-    q(`SELECT p.id, to_char(p.rdate,'YYYY-MM-DD') AS date, p.company_id, p.project_id, p.work, p.party, p.invoice,
-              to_char(p.invoice_date,'YYYY-MM-DD') AS invoice_date, p.category,
-              p.requested_amount::float8 AS requested_amount, p.approved_amount::float8 AS approved_amount,
+    q(`SELECT p.id, DATE_FORMAT(p.rdate,'%Y-%m-%d') AS date, p.company_id, p.project_id, p.work, p.party, p.invoice,
+              DATE_FORMAT(p.invoice_date,'%Y-%m-%d') AS invoice_date, p.category,
+              p.requested_amount AS requested_amount, p.approved_amount AS approved_amount,
               p.urgency, p.notes, p.status, p.approval_note, p.paid_method, p.paid_ref, p.txn_id,
-              to_char(p.approved_at,'YYYY-MM-DD HH24:MI') AS approved_at,
-              to_char(p.paid_at,'YYYY-MM-DD HH24:MI') AS paid_at,
+              DATE_FORMAT(p.approved_at,'%Y-%m-%d %H:%i') AS approved_at,
+              DATE_FORMAT(p.paid_at,'%Y-%m-%d %H:%i') AS paid_at,
               ru.name AS requested_by, au.name AS approved_by, pu.name AS paid_by
          FROM payment_requests p
          LEFT JOIN users ru ON ru.id = p.requested_by
          LEFT JOIN users au ON au.id = p.approved_by
          LEFT JOIN users pu ON pu.id = p.paid_by
-        WHERE p.company_id = ANY($1::int[])
-        ORDER BY CASE p.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, p.rdate DESC, p.id DESC`, [mine]),
-    q(`SELECT c.id, to_char(c.cdate,'YYYY-MM-DD') AS date, c.company_id, c.amount::float8 AS amount,
-              c.notes, u.name AS by
+        WHERE p.company_id IN (?)
+        ORDER BY CASE p.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, p.rdate DESC, p.id DESC`, [mineIds]),
+    q(`SELECT c.id, DATE_FORMAT(c.cdate,'%Y-%m-%d') AS date, c.company_id, c.amount AS amount,
+              c.notes, u.name AS \`by\`
          FROM cash_counts c LEFT JOIN users u ON u.id = c.created_by
-        WHERE c.company_id = ANY($1::int[])
-        ORDER BY c.cdate DESC, c.id DESC`, [mine]),
-    q(`SELECT c.id, to_char(c.cdate,'YYYY-MM-DD') AS date, c.company_id, c.project_id, c.amount::float8 AS amount,
-              c.source, c.ref, c.notes, c.txn_id, u.name AS by
+        WHERE c.company_id IN (?)
+        ORDER BY c.cdate DESC, c.id DESC`, [mineIds]),
+    q(`SELECT c.id, DATE_FORMAT(c.cdate,'%Y-%m-%d') AS date, c.company_id, c.project_id, c.amount AS amount,
+              c.source, c.ref, c.notes, c.txn_id, u.name AS \`by\`
          FROM cash_in c LEFT JOIN users u ON u.id = c.created_by
-        WHERE c.company_id = ANY($1::int[])
-        ORDER BY c.cdate DESC, c.id DESC`, [mine])
+        WHERE c.company_id IN (?)
+        ORDER BY c.cdate DESC, c.id DESC`, [mineIds])
   ]);
   let users = [];
   if (req.user.role === 'admin') {
     const r = await q(`SELECT u.id, u.email, u.name, u.role, u.active,
-              COALESCE(array_agg(uc.company_id) FILTER (WHERE uc.company_id IS NOT NULL), '{}') AS company_ids
+              GROUP_CONCAT(uc.company_id) AS company_ids_str
          FROM users u LEFT JOIN user_companies uc ON uc.user_id = u.id
         GROUP BY u.id ORDER BY u.id`);
-    users = r.rows;
+    users = r.rows.map(u => ({
+      ...u,
+      company_ids: u.company_ids_str ? u.company_ids_str.split(',').filter(Boolean).map(Number) : []
+    }));
   }
   const s = st.rows[0] || {};
   res.json({
@@ -230,7 +239,7 @@ app.post('/api/requests/:id/decide', wrap(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const approve = req.body.decision === 'approve';
   const note = String(req.body.note || '').slice(0, 1000);
-  const { rows: ex } = await q('SELECT status, requested_amount::float8 AS requested_amount FROM payment_requests WHERE id = $1', [id]);
+  const { rows: ex } = await q('SELECT status, requested_amount AS requested_amount FROM payment_requests WHERE id = $1', [id]);
   if (!ex[0]) return res.status(404).json({ error: 'That request no longer exists.' });
   if (ex[0].status !== 'pending') return res.status(400).json({ error: 'This request has already been decided.' });
   if (!approve) {
@@ -343,7 +352,7 @@ app.post('/api/cashin', wrap(async (req, res) => {
         `INSERT INTO txns (tdate, company_id, project_id, type, category, party, invoice, amount, method, status, notes, created_by)
          VALUES ($1,$2,$3,'income',$4,$5,$6,$7,'Cash','paid',$8,$9) RETURNING id`,
         [date, company_id, proj.id, cat, String(req.body.party || '').slice(0, 160), ref, amount,
-        ('Cash received — ' + source + (notes ? ' — ' + notes : '')).slice(0, 2000), req.user.id]);
+          ('Cash received — ' + source + (notes ? ' — ' + notes : '')).slice(0, 2000), req.user.id]);
       txnId = t[0].id;
     }
     const { rows } = await client.query(
@@ -514,7 +523,7 @@ app.post('/api/companies', wrap(async (req, res) => {
   const name = String(req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Company name is required.' });
   const SLOT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
-  const { rows: n } = await q('SELECT count(*)::int AS n FROM companies');
+  const { rows: n } = await q('SELECT COUNT(*) AS n FROM companies');
   const { rows } = await q('INSERT INTO companies (name, code, color, sort) VALUES ($1,$2,$3,$4) RETURNING id',
     [name, String(req.body.code || name.slice(0, 4)).toUpperCase(), SLOT[n[0].n % SLOT.length], n[0].n]);
   res.json({ ok: true, id: rows[0].id });
@@ -542,7 +551,7 @@ app.post('/api/projects', wrap(async (req, res) => {
   if (!name) return res.status(400).json({ error: 'A name is required.' });
   const { rows: co } = await q('SELECT 1 FROM companies WHERE id = $1', [company_id]);
   if (!co.length) return res.status(400).json({ error: 'That company no longer exists.' });
-  const { rows: n } = await q('SELECT count(*)::int AS n FROM projects WHERE company_id = $1', [company_id]);
+  const { rows: n } = await q('SELECT COUNT(*) AS n FROM projects WHERE company_id = $1', [company_id]);
   const { rows } = await q('INSERT INTO projects (company_id, name, code, sort) VALUES ($1,$2,$3,$4) RETURNING id',
     [company_id, name.slice(0, 120), String(req.body.code || '').toUpperCase().slice(0, 12), n[0].n]);
   await q('INSERT INTO audit (user_id, user_name, action, detail) VALUES ($1,$2,$3,$4)',
@@ -579,7 +588,7 @@ app.put('/api/categories', wrap(async (req, res) => {
     if (!list.length) continue;
     await q('DELETE FROM categories WHERE kind = $1', [kind]);
     for (let i = 0; i < list.length; i++) {
-      await q('INSERT INTO categories (kind, name, sort) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [kind, list[i], i]);
+      await q('INSERT IGNORE INTO categories (kind, name, sort) VALUES ($1,$2,$3)', [kind, list[i], i]);
     }
   }
   res.json({ ok: true });
@@ -600,7 +609,7 @@ app.post('/api/users', wrap(async (req, res) => {
   const { rows } = await q('INSERT INTO users (email, name, pass_hash, role, must_change) VALUES ($1,$2,$3,$4,TRUE) RETURNING id',
     [email, name, bcrypt.hashSync(pass, 10), role]);
   const ids = (req.body.companyIds || []).map(Number).filter(Boolean);
-  for (const c of ids) await q('INSERT INTO user_companies (user_id, company_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rows[0].id, c]);
+  for (const c of ids) await q('INSERT IGNORE INTO user_companies (user_id, company_id) VALUES ($1,$2)', [rows[0].id, c]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
@@ -623,7 +632,7 @@ app.put('/api/users/:id', wrap(async (req, res) => {
   if (Array.isArray(b.companyIds)) {
     await q('DELETE FROM user_companies WHERE user_id = $1', [id]);
     for (const c of b.companyIds.map(Number).filter(Boolean)) {
-      await q('INSERT INTO user_companies (user_id, company_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, c]);
+      await q('INSERT IGNORE INTO user_companies (user_id, company_id) VALUES ($1,$2)', [id, c]);
     }
   }
   res.json({ ok: true });
@@ -639,7 +648,7 @@ app.delete('/api/users/:id', wrap(async (req, res) => {
 
 app.get('/api/audit', wrap(async (req, res) => {
   if (!needAdmin(req, res)) return;
-  const { rows } = await q(`SELECT user_name, action, detail, to_char(at,'YYYY-MM-DD HH24:MI') AS at
+  const { rows } = await q(`SELECT user_name, action, detail, DATE_FORMAT(at, '%Y-%m-%d %H:%i') AS at
                               FROM audit ORDER BY id DESC LIMIT 100`);
   res.json(rows);
 }));
