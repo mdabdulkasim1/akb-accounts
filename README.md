@@ -3,7 +3,7 @@
 Internal expense and income system for the five group companies:
 AKB Construction · Samiha Polyclinic and Diagnostics · Samiha Pharmacy · Royal Dryfruits · AKB Rental.
 
-One shared PostgreSQL database, so everyone signed in sees the same figures at the same time.
+One shared MySQL/MariaDB database, so everyone signed in sees the same figures at the same time.
 
 ## The payment approval flow
 
@@ -36,6 +36,7 @@ One shared PostgreSQL database, so everyone signed in sees the same figures at t
 | **Record cash received & cash counts** | yes | **yes** | no |
 | Add and edit entries | yes | yes | yes, within their companies |
 | Delete entries | yes | no | no |
+| Terminate account / reset roles | yes | no | no |
 | Inter-company transfers | yes | not visible | not visible |
 | Manage people, companies, categories, settings | yes | no | no |
 | Change own password | yes | yes | yes |
@@ -44,7 +45,12 @@ One shared PostgreSQL database, so everyone signed in sees the same figures at t
 
 | Name | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | yes | PostgreSQL connection string. On Railway use `${{Postgres.DATABASE_URL}}` |
+| `DB_HOST` / `MYSQLHOST` | yes | MySQL server host IP or domain name (e.g. `accounts.akbgroups.com`) |
+| `DB_PORT` / `MYSQLPORT` | optional | MySQL port (default `3306`) |
+| `DB_USER` / `MYSQLUSER` | yes | Database user name |
+| `DB_PASSWORD` / `MYSQLPASSWORD` | yes | Database user password |
+| `DB_NAME` / `MYSQLDATABASE` | yes | Database name |
+| `MYSQL_URL` | alternative | Full connection URL `mysql://user:pass@host:3306/dbname` |
 | `SESSION_SECRET` | yes | Long random string used to sign the login cookie |
 | `ADMIN_EMAIL` | first boot | Email of the first administrator account |
 | `ADMIN_PASSWORD` | first boot | Password for that account (change it after signing in) |
@@ -52,14 +58,32 @@ One shared PostgreSQL database, so everyone signed in sees the same figures at t
 | `NODE_ENV` | yes in production | Set to `production` so the login cookie is marked secure |
 | `PORT` | no | Set automatically by Railway |
 
-The database schema is created automatically on first start, along with the five
-companies, the category lists and the first administrator. Nothing to run by hand.
+## Database Management & Deployment Commands
+
+You can run migration and seeding scripts manually or during deployment:
+
+```bash
+# Run both migrations and initial data seeding with detailed logs:
+npm run db:setup
+
+# Run table migrations only:
+npm run db:migrate
+
+# Run data seeder only (companies, categories, admin user):
+npm run db:seed
+```
+
+Alternatively, you can import the raw MySQL schema directly:
+```bash
+mysql -u root -p akb-accounts < schema.sql
+```
 
 ## Running locally
 
 ```bash
 npm install
 cp .env.example .env      # then edit the values
+npm run db:setup          # optional: run explicitly before start
 npm start                 # http://localhost:3000
 ```
 
