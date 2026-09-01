@@ -87,7 +87,7 @@ const wrap = fn => (req, res) => fn(req, res).catch(e => {
 });
 
 /* ------------------------------------------------------------------ db check */
-app.get('/api/db-check', async (req, res) => {
+app.get(['/api/db-check', '/api/dbcheck'], async (req, res) => {
   const cfg = getDbConfig();
   try {
     const { rows } = await q('SELECT 1 + 1 AS ok, COUNT(*) AS user_count FROM users');
