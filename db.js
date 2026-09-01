@@ -3,37 +3,74 @@ const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
 
-const host = process.env.DB_HOST || 'localhost';
-const port = parseInt(process.env.DB_PORT, 10) || 3306;
-const user = process.env.DB_USER || 'root';
-const password = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : '';
-const database = process.env.DB_NAME || 'akb-accounts';
+function getDbConfig() {
+  const dbUrl = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('mysql') ? process.env.DATABASE_URL : null);
+  
+  if (dbUrl) {
+    try {
+      const parsed = new URL(dbUrl);
+      const host = parsed.hostname;
+      const port = parseInt(parsed.port || '3306', 10);
+      const user = decodeURIComponent(parsed.username || 'root');
+      const password = decodeURIComponent(parsed.password || '');
+      const database = parsed.pathname.replace(/^\//, '') || 'akb-accounts';
+      const ssl = (process.env.DB_SSL === 'true' || process.env.MYSQL_SSL === 'true' || dbUrl.startsWith('mysqls://'))
+        ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' }
+        : undefined;
+      return { host, port, user, password, database, ssl };
+    } catch (e) {
+      console.warn('Failed to parse database URL, falling back to individual environment variables:', e.message);
+    }
+  }
+
+  const host = process.env.DB_HOST || process.env.MYSQLHOST || process.env.MYSQLPUBLICHOST || 'localhost';
+  const port = parseInt(process.env.DB_PORT || process.env.MYSQLPORT || '3306', 10);
+  const user = process.env.DB_USER || process.env.MYSQLUSER || 'root';
+  const password = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : (process.env.MYSQLPASSWORD !== undefined ? process.env.MYSQLPASSWORD : '');
+  const database = process.env.DB_NAME || process.env.MYSQLDATABASE || 'akb-accounts';
+  
+  let ssl = undefined;
+  if (process.env.DB_SSL === 'true' || process.env.MYSQL_SSL === 'true') {
+    ssl = { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' };
+  }
+
+  return { host, port, user, password, database, ssl };
+}
 
 let pool;
 
 async function initPool() {
-  if (user === 'root') {
+  if (pool) return;
+  const cfg = getDbConfig();
+
+  if (cfg.user === 'root') {
     try {
-      const tempConn = await mysql.createConnection({ host, port, user, password });
-      await tempConn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      const tempConnConfig = { host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password };
+      if (cfg.ssl) tempConnConfig.ssl = cfg.ssl;
+      const tempConn = await mysql.createConnection(tempConnConfig);
+      await tempConn.query(`CREATE DATABASE IF NOT EXISTS \`${cfg.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
       await tempConn.end();
     } catch (e) {
       /* ignore root database creation error if database exists */
     }
   }
 
-  pool = mysql.createPool({
-    host,
-    port,
-    user,
-    password,
-    database,
+  const poolOptions = {
+    host: cfg.host,
+    port: cfg.port,
+    user: cfg.user,
+    password: cfg.password,
+    database: cfg.database,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
     decimalNumbers: true,
-    multipleStatements: true
-  });
+    multipleStatements: true,
+    connectTimeout: 10000
+  };
+  if (cfg.ssl) poolOptions.ssl = cfg.ssl;
+
+  pool = mysql.createPool(poolOptions);
 }
 
 function processSql(text) {

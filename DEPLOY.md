@@ -1,105 +1,118 @@
-# Putting the app online — step by step
+# Deploying AKB Group Accounts to Railway.com (with your Own MySQL Database)
 
-Total time about 15 minutes. You need a phone and an email address.
-Nothing here requires any coding.
-
----
-
-## Part 1 — Create a GitHub account (5 minutes)
-
-GitHub stores the code. Railway reads it from there and rebuilds the app whenever
-the code changes.
-
-1. Go to **https://github.com/signup**
-2. Enter your email, choose a password, and pick a username (for example `akbgroup`).
-3. Verify the puzzle, then enter the 6-digit code emailed to you.
-4. Skip the personalisation questions and choose the **Free** plan.
-
-## Part 2 — Put the code on GitHub (5 minutes, no commands)
-
-1. Unzip **akb-accounts.zip** on your computer. You should see `server.js`,
-   `package.json`, a `public` folder and the rest.
-2. On GitHub click the **+** at the top right → **New repository**.
-3. Name it `akb-accounts`. Choose **Private**. Do **not** tick "Add a README".
-   Click **Create repository**.
-4. On the next page click the link **uploading an existing file**.
-5. Open the unzipped folder, select everything inside it, and drag it all into the
-   browser window. Wait for the uploads to finish.
-   - If a `node_modules` folder exists, do **not** upload it. It is rebuilt automatically.
-6. Click **Commit changes**.
-
-## Part 3 — Create the Railway project (5 minutes)
-
-1. Go to **https://railway.com** and click **Login** → **Login with GitHub**, then
-   authorise Railway.
-2. Railway asks for a plan. Choose **Hobby ($5 / month)** and add your card.
-   The trial credit may cover the first month.
-3. Click **New Project** → **Deploy from GitHub repo** → select `akb-accounts`.
-   Railway will start building. Let it run.
-4. In the same project click **+ Create** → **Database** → **Add PostgreSQL**.
-   Wait until it shows *Deployed*.
-
-## Part 4 — Connect the app to the database
-
-1. Click your **akb-accounts** service (not the database) → **Variables** tab.
-2. Add these one at a time with **+ New Variable**:
-
-   | Name | Value |
-   |---|---|
-   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` — type it exactly, Railway fills it in |
-   | `SESSION_SECRET` | a long random string, e.g. 40 mixed characters you mash out |
-   | `ADMIN_EMAIL` | your email address |
-   | `ADMIN_PASSWORD` | a strong password you will use to sign in first |
-   | `NODE_ENV` | `production` |
-
-3. Click **Deploy** / **Redeploy** when Railway offers it.
-
-## Part 5 — Open it
-
-1. Still on the app service, go to **Settings** → **Networking** →
-   **Generate Domain**. Accept the suggested port (Railway detects it).
-2. Railway gives you an address like
-   `https://akb-accounts-production.up.railway.app`. Open it.
-3. Sign in with the `ADMIN_EMAIL` and `ADMIN_PASSWORD` you set.
-4. First things to do:
-   - **Settings → My account** — change your password.
-   - **Settings → People → + Add person** — create the staff logins and tick which
-     companies each one may see.
-   - **Settings → Companies** — correct any company name or code.
-
-Bookmark the address on your phone. It works as a normal website on any device.
+This guide explains how to deploy **AKB Group Accounts** on **Railway.com** using GitHub CI/CD, connected directly to **your own MySQL/MariaDB database** (e.g. hosted on your VPS/AlmaLinux/cPanel server or custom host).
 
 ---
 
-## Optional — your own domain
+## 🛠️ Phase 1 — Prepare your Server's MySQL Database for Remote Access
 
-In **Settings → Networking → Custom Domain**, enter something like
-`accounts.yourcompany.com`. Railway shows a CNAME record; add it at your domain
-registrar. HTTPS is issued automatically.
+If your MySQL/MariaDB database is running on your own server (e.g. `accounts.akbgroups.com` or server IP `x.x.x.x`), Railway's cloud app needs permission to connect to it.
 
-## Cost
+### 1. Ensure MariaDB/MySQL is listening to Remote Connections
+In `/etc/my.cnf` or `/etc/my.cnf.d/mariadb-server.cnf` on your server:
+```ini
+[mysqld]
+bind-address = 0.0.0.0
+```
+*(If `bind-address` was `127.0.0.1`, change it to `0.0.0.0` or comment it out)*
 
-- Railway Hobby: **$5 / month** of usage credit included.
-- This app plus a small Postgres normally stays inside that credit.
-- Watch **Usage** in the Railway dashboard for the first month.
+Restart MariaDB:
+```bash
+sudo systemctl restart mariadb
+```
 
-## Backups
+### 2. Grant Access to your Database User for Remote Connections (`%`)
+Connect to MySQL on your server as root:
+```bash
+sudo mysql -u root
+```
+Run the following SQL commands to grant remote access to your database user:
+```sql
+-- Replace 'accountsakbgroup_user', 'accountsakbgroup_db', and 'bka@6202#db' with your actual credentials
+GRANT ALL PRIVILEGES ON `accountsakbgroup_db`.* TO 'accountsakbgroup_user'@'%' IDENTIFIED BY 'bka@6202#db';
+FLUSH PRIVILEGES;
+EXIT;
+```
 
-1. In Railway click the **Postgres** service → **Backups** → enable scheduled backups.
-2. Separately, once a month use **Settings → Data → Export everything** in the app
-   and keep the file somewhere safe. That file is readable without Railway.
+### 3. Open MySQL Port (3306) in your Server Firewall
+Allow incoming connections on port `3306`:
+```bash
+sudo firewall-cmd --permanent --add-port=3306/tcp
+sudo firewall-cmd --reload
+```
+*(If using AWS/DigitalOcean/Hetzner, also ensure port `3306` is allowed in your Cloud Security Group / Firewall rules)*.
 
-## If something goes wrong
+---
 
-| Symptom | Fix |
+## 🚀 Phase 2 — Deploy App to Railway.com
+
+### Step 1: Push Code to GitHub
+1. Create a private repository on GitHub (e.g. `akb-accounts`).
+2. Push your project code to GitHub:
+   ```bash
+   git init
+   git add .
+   git commit -m "Prepare for Railway deployment"
+   git remote add origin https://github.com/YOUR_USERNAME/akb-accounts.git
+   git push -u origin main
+   ```
+
+### Step 2: Create a New Service on Railway
+1. Log in to [Railway.com](https://railway.com).
+2. Click **New Project** → **Deploy from GitHub repo**.
+3. Select your `akb-accounts` repository.
+4. Railway will automatically detect Node.js (via `NIXPACKS` builder) and `railway.json`.
+
+---
+
+## ⚙️ Phase 3 — Configure Environment Variables on Railway
+
+1. In Railway, click on your deployed **akb-accounts** service.
+2. Navigate to the **Variables** tab.
+3. Click **+ Add Variable** or **Raw Editor** and set the following environment variables:
+
+| Variable Name | Example Value | Description |
+|---|---|---|
+| `DB_HOST` | `accounts.akbgroups.com` *(or your server IP)* | Host domain or IP of your own MySQL database |
+| `DB_PORT` | `3306` | MySQL port |
+| `DB_USER` | `accountsakbgroup_user` | MySQL username |
+| `DB_PASSWORD` | `bka@6202#db` | MySQL password |
+| `DB_NAME` | `accountsakbgroup_db` | MySQL database name |
+| `SESSION_SECRET` | `a_long_random_secure_secret_string_12345` | Secret for cookie session encryption |
+| `ADMIN_EMAIL` | `admin@akbgroups.com` | Email for default admin user |
+| `ADMIN_PASSWORD` | `ChangeMe123!` | Initial password for admin user |
+| `NODE_ENV` | `production` | Set to production |
+
+*(Alternative: You can use `MYSQL_URL=mysql://accountsakbgroup_user:bka%406202%23db@accounts.akbgroups.com:3306/accountsakbgroup_db` instead of individual `DB_*` variables).*
+
+---
+
+## 🌐 Phase 4 — Generate Public Domain & Verify
+
+1. Go to **Settings** → **Networking** → click **Generate Domain** (e.g. `akb-accounts-production.up.railway.app`).
+2. Alternatively, click **Custom Domain** and map your own domain (e.g. `accounts.akbgroups.com`) via a CNAME record.
+3. Railway automatically triggers a redeploy.
+4. Open the generated domain link.
+5. On startup, `server.js` automatically runs database migrations (`schema_migrations`) and seeds initial tables if needed.
+6. Log in with your `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
+
+---
+
+## 🔄 Optional: Using Railway's Provisioned MySQL Database instead
+
+If you prefer to host the MySQL database inside Railway instead of your own server:
+1. In your Railway project, click **+ Create** → **Database** → **Add MySQL**.
+2. Railway will create a MySQL database and generate variables: `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`, `MYSQLPASSWORD`, `MYSQLDATABASE`.
+3. In your `akb-accounts` service, link the database or add variable:
+   - `MYSQL_URL` = `${{MySQL.MYSQL_URL}}`
+4. Redeploy the app.
+
+---
+
+## ❓ Troubleshooting
+
+| Issue | Solution |
 |---|---|
-| Build fails | Open the **Deploy logs**. Usually `package.json` was not uploaded to the repository root. |
-| "DATABASE_URL is not set" in the logs | The variable is missing or mistyped. It must be exactly `${{Postgres.DATABASE_URL}}` |
-| Page loads but sign-in fails | `ADMIN_EMAIL` / `ADMIN_PASSWORD` were added *after* the first successful boot, so the account was created with the defaults. Open the Postgres service → **Data** → delete the row in `users`, then redeploy. |
-| Signed out immediately after signing in | `NODE_ENV` is `production` but the site was opened over `http://`. Use the `https://` address. |
-
-## Updating the app later
-
-Edit the file on GitHub (pencil icon) and commit, or upload a replacement file.
-Railway rebuilds and redeploys within a minute or two. Your data is untouched —
-it lives in Postgres, not in the code.
+| `connect ETIMEDOUT` or `ECONNREFUSED` | Your server firewall is blocking port `3306` or MariaDB is bound to `127.0.0.1`. Verify `bind-address = 0.0.0.0` and `firewall-cmd --add-port=3306/tcp`. |
+| `Access denied for user ...@'...'` | The MySQL user does not have `%` host access permissions. Run `GRANT ALL PRIVILEGES ON database.* TO 'user'@'%'; FLUSH PRIVILEGES;` on your server. |
+| Healthcheck failure | Ensure `/healthz` endpoint responds on port designated by Railway (`PORT` env variable). |

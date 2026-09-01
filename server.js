@@ -661,13 +661,15 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false, maxAge: P
 app.use((req, res) => res.status(404).type('text').send('Not found'));
 
 /* ------------------------------------------------------------------ boot */
-(async () => {
-  try {
-    await migrate();
-    await seed();
-    app.listen(PORT, '0.0.0.0', () => console.log('AKB Group Accounts running on port ' + PORT));
-  } catch (e) {
-    console.error('Startup failed:', e.message);
-    process.exit(1);
-  }
-})();
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('AKB Group Accounts server running on port ' + PORT);
+  (async () => {
+    try {
+      await migrate();
+      await seed();
+      console.log('Database migration & seeding completed successfully.');
+    } catch (e) {
+      console.error('Database setup notice during boot:', e.message);
+    }
+  })();
+});
