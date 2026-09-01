@@ -4,37 +4,48 @@ const path = require('path');
 const mysql = require('mysql2/promise');
 
 function getDbConfig() {
-  const dbUrl = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('mysql') ? process.env.DATABASE_URL : null);
-  
-  if (dbUrl) {
-    try {
-      const parsed = new URL(dbUrl);
-      const host = parsed.hostname;
-      const port = parseInt(parsed.port || '3306', 10);
-      const user = decodeURIComponent(parsed.username || 'root');
-      const password = decodeURIComponent(parsed.password || '');
-      const database = parsed.pathname.replace(/^\//, '') || 'akb-accounts';
-      const ssl = (process.env.DB_SSL === 'true' || process.env.MYSQL_SSL === 'true' || dbUrl.startsWith('mysqls://'))
-        ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' }
-        : undefined;
-      return { host, port, user, password, database, ssl };
-    } catch (e) {
-      console.warn('Failed to parse database URL, falling back to individual environment variables:', e.message);
-    }
-  }
+  const dbUrl = process.env.MYSQL_URL ||
+                process.env.MYSQLPUBLIC_URL ||
+                process.env.MYSQLPRIVATE_URL ||
+                process.env.MYSQL_PUBLIC_URL ||
+                (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('mysql') ? process.env.DATABASE_URL : null);
 
-  const host = process.env.DB_HOST || process.env.MYSQLHOST || process.env.MYSQLPUBLICHOST || 'localhost';
-  const port = parseInt(process.env.DB_PORT || process.env.MYSQLPORT || '3306', 10);
-  const user = process.env.DB_USER || process.env.MYSQLUSER || 'root';
-  const password = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : (process.env.MYSQLPASSWORD !== undefined ? process.env.MYSQLPASSWORD : '');
-  const database = process.env.DB_NAME || process.env.MYSQLDATABASE || 'akb-accounts';
-  
+  const host = process.env.MYSQLHOST ||
+               process.env.MYSQLPUBLICHOST ||
+               process.env.MYSQLPRIVATEHOST ||
+               process.env.MYSQL_HOST ||
+               process.env.DB_HOST ||
+               'localhost';
+
+  const port = parseInt(
+    process.env.MYSQLPORT ||
+    process.env.MYSQL_PORT ||
+    process.env.DB_PORT ||
+    '3306', 10
+  );
+
+  const user = process.env.MYSQLUSER ||
+               process.env.MYSQL_USER ||
+               process.env.DB_USER ||
+               'root';
+
+  const password = process.env.MYSQLPASSWORD !== undefined
+    ? process.env.MYSQLPASSWORD
+    : (process.env.MYSQL_PASSWORD !== undefined
+        ? process.env.MYSQL_PASSWORD
+        : (process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : ''));
+
+  const database = process.env.MYSQLDATABASE ||
+                   process.env.MYSQL_DATABASE ||
+                   process.env.DB_NAME ||
+                   'akb-accounts';
+
   let ssl = undefined;
   if (process.env.DB_SSL === 'true' || process.env.MYSQL_SSL === 'true') {
     ssl = { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' };
   }
 
-  return { host, port, user, password, database, ssl };
+  return { dbUrl, host, port, user, password, database, ssl };
 }
 
 let pool;
@@ -43,7 +54,16 @@ async function initPool() {
   if (pool) return;
   const cfg = getDbConfig();
 
-  if (cfg.user === 'root') {
+  if (cfg.dbUrl) {
+    try {
+      pool = mysql.createPool(cfg.dbUrl);
+      return;
+    } catch (e) {
+      console.warn('[MySQL Pool URL Warn] Failed to create pool from URL, falling back to parameters:', e.message);
+    }
+  }
+
+  if (cfg.user === 'root' && cfg.host === 'localhost') {
     try {
       const tempConnConfig = { host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password };
       if (cfg.ssl) tempConnConfig.ssl = cfg.ssl;
