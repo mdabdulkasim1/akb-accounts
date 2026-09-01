@@ -70,11 +70,20 @@ async function allowedCompanies(user) {
   }
   return (user.company_ids || []).map(Number);
 }
+function formatErr(e) {
+  if (!e) return 'Unknown error';
+  if (Array.isArray(e.errors) && e.errors.length) {
+    return e.errors.map(err => err.message || String(err)).join('; ');
+  }
+  return e.message || String(e);
+}
+
 const wrap = fn => (req, res) => fn(req, res).catch(e => {
-  console.error(req.method, req.path, e.stack || e.message);
-  const isDbErr = e.code || e.errno || e.sqlState || (e.message && (e.message.includes('connect') || e.message.includes('Access denied') || e.message.includes('Table') || e.message.includes('Unknown database')));
-  const msg = isDbErr ? `Database error: ${e.message}` : 'Something went wrong on the server.';
-  res.status(500).json({ error: msg, details: e.message, code: e.code });
+  const errDetails = formatErr(e);
+  console.error(req.method, req.path, 'Error:', errDetails);
+  const isDbErr = e.name === 'AggregateError' || e.code || e.errno || e.sqlState || errDetails.includes('connect') || errDetails.includes('Access denied') || errDetails.includes('Table') || errDetails.includes('Unknown database');
+  const msg = isDbErr ? `Database error: ${errDetails}` : 'Something went wrong on the server.';
+  res.status(500).json({ error: msg, details: errDetails, code: e.code || 'DB_ERROR' });
 });
 
 /* ------------------------------------------------------------------ db check */
@@ -84,7 +93,9 @@ app.get('/api/db-check', async (req, res) => {
     const { rows } = await q('SELECT 1 + 1 AS ok, COUNT(*) AS user_count FROM users');
     res.json({ status: 'connected', host: cfg.host, port: cfg.port, user: cfg.user, database: cfg.database, userCount: rows[0].user_count });
   } catch (e) {
-    res.status(500).json({ status: 'error', host: cfg.host, port: cfg.port, user: cfg.user, database: cfg.database, error: e.message, code: e.code });
+    const errDetails = formatErr(e);
+    const hint = cfg.host === 'localhost' ? 'DB_HOST is currently set to localhost. On Railway, set DB_HOST to your remote server IP or domain in Railway Variables.' : 'Check database host accessibility, firewall port 3306, and DB_USER/DB_PASSWORD credentials.';
+    res.status(500).json({ status: 'error', host: cfg.host, port: cfg.port, user: cfg.user, database: cfg.database, error: errDetails, hint, code: e.code });
   }
 });
 
