@@ -259,4 +259,4 @@ async function seed(verbose = false) {
   log('Database seeding completed.');
 }
 
-module.exports = { q, pool: poolWrapper, migrate: runVersionedMigrations, seed };
+module.exports = { q, pool: poolWrapper, migrate: runVersionedMigrations, seed, getDbConfig };

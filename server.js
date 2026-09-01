@@ -6,7 +6,7 @@ const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
-const { q, pool, migrate, seed } = require('./db');
+const { q, pool, migrate, seed, getDbConfig } = require('./db');
 
 const app = express();
 const argPort = (process.argv.find(a => a.startsWith('--port=')) || '').split('=')[1];
@@ -71,8 +71,21 @@ async function allowedCompanies(user) {
   return (user.company_ids || []).map(Number);
 }
 const wrap = fn => (req, res) => fn(req, res).catch(e => {
-  console.error(req.method, req.path, e.message);
-  res.status(500).json({ error: 'Something went wrong on the server.' });
+  console.error(req.method, req.path, e.stack || e.message);
+  const isDbErr = e.code || e.errno || e.sqlState || (e.message && (e.message.includes('connect') || e.message.includes('Access denied') || e.message.includes('Table') || e.message.includes('Unknown database')));
+  const msg = isDbErr ? `Database error: ${e.message}` : 'Something went wrong on the server.';
+  res.status(500).json({ error: msg, details: e.message, code: e.code });
+});
+
+/* ------------------------------------------------------------------ db check */
+app.get('/api/db-check', async (req, res) => {
+  const cfg = getDbConfig();
+  try {
+    const { rows } = await q('SELECT 1 + 1 AS ok, COUNT(*) AS user_count FROM users');
+    res.json({ status: 'connected', host: cfg.host, port: cfg.port, user: cfg.user, database: cfg.database, userCount: rows[0].user_count });
+  } catch (e) {
+    res.status(500).json({ status: 'error', host: cfg.host, port: cfg.port, user: cfg.user, database: cfg.database, error: e.message, code: e.code });
+  }
 });
 
 /* ------------------------------------------------------------------ login */
