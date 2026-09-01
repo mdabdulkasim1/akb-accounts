@@ -178,13 +178,17 @@ async function migrate() {
     ALTER TABLE cash_in          ADD COLUMN IF NOT EXISTS project_id INT REFERENCES projects(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS txns_project_idx ON txns (project_id);
   `);
+
+  // Royal Dryfruits firm was dropped from the group — remove it (and its
+  // entries, which cascade) from any existing database. Idempotent: a no-op
+  // once the company is gone.
+  await q(`DELETE FROM companies WHERE name = 'Royal Dryfruits'`);
 }
 
 const SEED_COMPANIES = [
   ['AKB Construction', 'AKBC', '#2a78d6'],
   ['Samiha Polyclinic and Diagnostics', 'SPD', '#eb6834'],
   ['Samiha Pharmacy', 'SPH', '#1baf7a'],
-  ['Royal Dryfruits', 'RDF', '#eda100'],
   ['AKB Rental', 'AKBR', '#e87ba4']
 ];
 const SEED_EXPENSE = ['Salaries & Wages', 'Staff Benefits', 'Rent', 'Electricity & Water', 'Telephone & Internet',

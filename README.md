@@ -1,7 +1,7 @@
 # AKB Group Accounts
 
-Internal expense and income system for the five group companies:
-AKB Construction · Samiha Polyclinic and Diagnostics · Samiha Pharmacy · Royal Dryfruits · AKB Rental.
+Internal expense and income system for the group companies:
+AKB Construction · Samiha Polyclinic and Diagnostics · Samiha Pharmacy · AKB Rental.
 
 One shared PostgreSQL database, so everyone signed in sees the same figures at the same time.
 
